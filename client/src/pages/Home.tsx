@@ -1,23 +1,15 @@
 /**
  * 作製中一覧 - CRMトップ画面
- * デザイン: PANTONE Pink C (#D62598) アクセント、白カード、薄グレー背景
- * レイアウト: ヘッダー（タイトル＋検索＋フィルタ）＋縦スクロールカードリスト
- *
- * カード構造:
- *   - アップロードデータ（アップロードA / アップロードB）
- *   - アップロード日時
- *   - 注文コード（任意）
- *   - 顧客名（1つのみ）
- *   - LINE / 管理画面ボタン
- *   - 進捗テーブル
+ * データソース: Supabase Green (fhamrkmsxidxayaoexso) の uploads テーブル
+ * upload-center から送信されたデータをリアルタイムで表示する
  */
-
-import { useState } from "react";
-import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLocation } from "wouter";
+import { fetchUploads, type UploadRecord } from "@/lib/supabase";
 
 // ─── 型定義 ────────────────────────────────────────────────────────────────
 interface ProgressRow {
@@ -32,57 +24,37 @@ interface ProgressRow {
 
 interface Customer {
   id: string;
-  /** アップロードA のラベル（例: "ゲストアップロード"） */
   uploadA?: string;
-  /** アップロードB のラベル（例: "圏　佑汰"） */
   uploadB?: string;
-  /** アップロード日時（例: "2024-03-15 14:32"） */
   uploadedAt?: string;
-  /** 注文コード（例: "ST-01387"） */
   orderCode?: string;
-  /** 顧客名 */
   customerName: string;
+  selectedInsoles: string[];
+  status: string | null;
   rows: ProgressRow[];
 }
 
-// ─── サンプルデータ ──────────────────────────────────────────────────────────
-const initialCustomers: Customer[] = [
-  {
-    id: "1",
-    uploadA: "ゲストアップロード",
-    uploadB: "圏　佑汰",
-    uploadedAt: "2024-03-15 14:32",
-    customerName: "獄　佑汰",
+// UploadRecord → Customer 変換
+function mapUploadToCustomer(u: UploadRecord): Customer {
+  return {
+    id: u.id,
+    uploadA: u.guest_tf ? 'ゲストアップロード' : undefined,
+    uploadB: u.insole_user_name ?? undefined,
+    uploadedAt: u.created_at
+      ? new Date(u.created_at).toLocaleString('ja-JP', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit',
+        })
+      : undefined,
+    orderCode: u.order_name ?? undefined,
+    customerName: u.insole_user_name ?? '（名前未設定）',
+    selectedInsoles: u.selected_insoles ?? [],
+    status: u.status,
     rows: [
-      { id: 1, keisoku: false, bunseki: true, sekkei: false, sakusei: false, hassou: false, shukkaDate: "" },
+      { id: 1, keisoku: false, bunseki: false, sekkei: false, sakusei: false, hassou: false, shukkaDate: '' },
     ],
-  },
-  {
-    id: "2",
-    uploadedAt: "2024-03-16 09:10",
-    customerName: "渡部　紀子",
-    rows: [
-      { id: 1, keisoku: false, bunseki: true, sekkei: false, sakusei: false, hassou: false, shukkaDate: "" },
-    ],
-  },
-  {
-    id: "3",
-    uploadedAt: "2024-03-17 11:45",
-    orderCode: "ST-01387",
-    customerName: "野尻　美代子",
-    rows: [
-      { id: 1, keisoku: false, bunseki: true, sekkei: false, sakusei: false, hassou: false, shukkaDate: "" },
-    ],
-  },
-  {
-    id: "4",
-    uploadedAt: "2024-03-18 16:20",
-    customerName: "田畑　より子",
-    rows: [
-      { id: 1, keisoku: false, bunseki: true, sekkei: false, sakusei: false, hassou: false, shukkaDate: "" },
-    ],
-  },
-];
+  };
+}
 
 // ─── 進捗テーブル ─────────────────────────────────────────────────────────
 const COLUMNS = [
@@ -104,50 +76,45 @@ function ProgressTable({
     <div className="mt-4 overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ backgroundColor: "#f9f9f9" }}>
+          <tr>
             {COLUMNS.map((col) => (
               <th
                 key={col.field}
                 className="px-5 py-2 text-left font-normal text-xs border-b border-border"
-                style={{ color: "#888", minWidth: 140 }}
+                style={{ color: "#aaa", minWidth: 60 }}
               >
                 {col.label}
               </th>
             ))}
             <th
               className="px-5 py-2 text-left font-normal text-xs border-b border-border"
-              style={{ color: "#888", minWidth: 160 }}
+              style={{ color: "#aaa", minWidth: 90 }}
             >
-              出荷予定日
+              出荷日
             </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className="bg-white">
-              {COLUMNS.map((col, i) => (
-                <td key={col.field} className="px-5 py-3">
-                  <div className="flex items-center gap-3">
-                    {i === 0 && (
-                      <span className="text-xs" style={{ color: "#bbb", minWidth: 12 }}>
-                        {row.id}
-                      </span>
-                    )}
-                    <Checkbox
-                      checked={row[col.field]}
-                      onCheckedChange={() => onToggle(row.id, col.field)}
-                      className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
-                      style={
-                        !row[col.field]
-                          ? { borderColor: "#ccc", backgroundColor: "transparent" }
-                          : undefined
-                      }
-                    />
-                  </div>
+            <tr key={row.id}>
+              {COLUMNS.map((col) => (
+                <td key={col.field} className="px-5 py-2">
+                  <Checkbox
+                    checked={row[col.field]}
+                    onCheckedChange={() => onToggle(row.id, col.field)}
+                    className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
+                    style={
+                      !row[col.field]
+                        ? { borderColor: "#ccc", backgroundColor: "transparent" }
+                        : {}
+                    }
+                  />
                 </td>
               ))}
-              <td className="px-5 py-3">
-                <span className="text-xs text-muted-foreground">{row.shukkaDate}</span>
+              <td className="px-5 py-2">
+                <span className="text-xs" style={{ color: "#aaa" }}>
+                  {row.shukkaDate || "—"}
+                </span>
               </td>
             </tr>
           ))}
@@ -169,42 +136,44 @@ function CustomerCard({
   return (
     <div
       className="bg-white rounded-xl border border-border p-5 mb-4"
-      style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}
+      style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}
     >
-      {/* ── アップロードA ── */}
       {customer.uploadA && (
-        <p className="text-xs font-bold mb-0.5" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
+        <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
           {customer.uploadA}
         </p>
       )}
-
-      {/* ── アップロードB ── */}
       {customer.uploadB && (
         <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
           {customer.uploadB}
         </p>
       )}
-
-      {/* ── アップロード日時 ── */}
       {customer.uploadedAt && (
         <p className="text-xs mb-0.5" style={{ color: "#aaa", letterSpacing: "0.02em" }}>
           {customer.uploadedAt}
         </p>
       )}
-
-      {/* ── 注文コード ── */}
       {customer.orderCode && (
         <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
           {customer.orderCode}
         </p>
       )}
-
-      {/* ── 顧客名（1つのみ） ── */}
+      {customer.selectedInsoles.length > 0 && (
+        <div className="flex gap-1 mb-2 flex-wrap">
+          {customer.selectedInsoles.map((ins) => (
+            <span
+              key={ins}
+              className="text-xs px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: '#D6259815', color: '#D62598', border: '1px solid #D6259840' }}
+            >
+              {ins}
+            </span>
+          ))}
+        </div>
+      )}
       <h2 className="text-2xl font-bold mb-4" style={{ color: "#1a1a1a", letterSpacing: "0.05em" }}>
         {customer.customerName}
       </h2>
-
-      {/* ── ボタン群 ── */}
       <div className="flex items-center gap-2 mb-1">
         <button
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all active:scale-95"
@@ -213,7 +182,6 @@ function CustomerCard({
           <MessageCircle size={15} strokeWidth={2} />
           LINE
         </button>
-
         <button
           onClick={() => setLocation(`/customer/${customer.id}`)}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-border bg-white hover:bg-gray-50 transition-all active:scale-95"
@@ -223,8 +191,6 @@ function CustomerCard({
           管理画面を開く
         </button>
       </div>
-
-      {/* ── 進捗テーブル ── */}
       <ProgressTable
         rows={customer.rows}
         onToggle={(rowId, field) => onToggle(customer.id, rowId, field)}
@@ -235,8 +201,28 @@ function CustomerCard({
 
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function Home() {
-  const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  const loadUploads = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const records = await fetchUploads({ limit: 100 });
+      setCustomers(records.map(mapUploadToCustomer));
+    } catch (e) {
+      console.error('Failed to fetch uploads:', e);
+      setError('データの取得に失敗しました。再読み込みしてください。');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUploads();
+  }, [loadUploads]);
 
   const handleToggle = (
     cid: string,
@@ -271,13 +257,10 @@ export default function Home() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#f5f5f5" }}>
       <div className="max-w-5xl mx-auto px-6 py-7">
-
-        {/* ─── ヘッダー ─── */}
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold" style={{ color: "#1a1a1a" }}>
             作製中一覧
           </h1>
-
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search
@@ -293,7 +276,6 @@ export default function Home() {
                 className="pl-8 pr-4 py-2 h-9 w-52 text-sm bg-white border-border focus-visible:ring-[#D62598]"
               />
             </div>
-
             <Button
               variant="outline"
               size="sm"
@@ -304,23 +286,40 @@ export default function Home() {
               フィルタ
               <ChevronDown size={12} strokeWidth={2} />
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadUploads}
+              disabled={loading}
+              className="h-9 px-3 bg-white border-border"
+              style={{ color: "#555" }}
+            >
+              <RefreshCw size={13} strokeWidth={1.8} className={loading ? 'animate-spin' : ''} />
+            </Button>
           </div>
         </div>
-
-        {/* ─── カードリスト ─── */}
-        {filtered.length === 0 ? (
+        {loading && (
+          <div className="text-center py-20 text-sm" style={{ color: "#aaa" }}>
+            読み込み中...
+          </div>
+        )}
+        {!loading && error && (
+          <div className="text-center py-10 text-sm text-red-500">
+            {error}
+          </div>
+        )}
+        {!loading && !error && filtered.length === 0 && (
           <div className="text-center py-20 text-muted-foreground text-sm">
             該当するデータがありません
           </div>
-        ) : (
-          filtered.map((customer) => (
-            <CustomerCard
-              key={customer.id}
-              customer={customer}
-              onToggle={handleToggle}
-            />
-          ))
         )}
+        {!loading && !error && filtered.map((customer) => (
+          <CustomerCard
+            key={customer.id}
+            customer={customer}
+            onToggle={handleToggle}
+          />
+        ))}
       </div>
     </div>
   );

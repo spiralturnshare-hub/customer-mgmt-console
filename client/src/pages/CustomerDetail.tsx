@@ -1,162 +1,18 @@
 /**
  * CustomerDetail - 管理画面（顧客詳細展開ページ）
- * デザイン: PANTONE Pink C (#D62598) アクセント、白カード、薄グレー背景
+ * データソース: Supabase Green の uploads テーブル（ID指定で取得）
  * レイアウト:
- *   - 上部: 日時・顧客名・改修歴・カテゴリタグ
+ *   - 上部: 日時・顧客名・インソール種別タグ
  *   - 注文情報ブロック（横幅全体）
- *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+追加情報+アップロード情報
+ *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+アップロード情報
  */
 
-import { ArrowLeft, Copy } from "lucide-react";
-import { useLocation } from "wouter";
+import { ArrowLeft, Copy, RefreshCw } from "lucide-react";
+import { useLocation, useParams } from "wouter";
+import { useEffect, useState } from "react";
+import { fetchUploadById, fetchUploadFiles, type UploadRecord, type UploadFileRecord } from "@/lib/supabase";
 
 const PINK = "#D62598";
-
-// ─── サンプルデータ ──────────────────────────────────────────────────────────
-const sampleDetail = {
-  createdAt: "2026/05/09 12:26:15",
-  customerName: "あやかさん（2026年ゴールドコーストセミナー）",
-  revisedHistory: "",
-  categories: ["ビューティー", "靴インソール"],
-
-  // 注文情報
-  order: {
-    orderId: "cnv117681-e66e-44e1-5c6e-0623f0107b91",
-    orderedAt: "1970/01/01 02:23:45",
-    insolId1: "GUEST-UPLOAD",
-    insolId2: "GUEST-UPLOAD",
-    insolType1: "ゲストアップロード",
-    insolType2: "ゲストアップロード",
-    csr: "GUEST",
-  },
-
-  // 顧客情報
-  customer: {
-    uploadId: "55cee9f5-2f58-4a4d-9713-08c3c300029c3",
-    insolId: "あやかさん（2026年ゴールドコースト歩きセミナー）",
-    guestUpload: "true",
-    licenseOrder: "false",
-    uploadUserName: "温永 陽生",
-    insolUserName: "あやかさん（2026年3月ゴールドコースト歩きセミナー）",
-    insolUserNameKana: "アヤカ",
-    email: "",
-    phone: "",
-  },
-
-  // 作製目的
-  purpose: {
-    id: "649e0e5c-3710-4754-1dc2-019B0U60036",
-    purposeOrder: "歩くことが多い",
-    goal: "美容",
-    playStyle: "",
-    golfRight: "",
-    golfLeft: "",
-  },
-
-  // 配送先情報
-  shipping: {
-    id: "3H41ac-e90-447f-fa9c-1a96f307e4HT",
-    nameKanji: "塩本 智佳",
-    nameKana: "",
-    postalCode: "752000",
-    prefecture: "神奈川県",
-    city: "品川",
-    address: "南区1961",
-    building: "申し訳方",
-  },
-
-  // ファイル（動画・画像）
-  files: [
-    {
-      key: "oneleg",
-      label: "oneleg",
-      type: "video" as const,
-      id: "f4249d6b-2242-4b37-b582-b04b5c4b303c",
-      fileType: "video",
-      updatedAt: "2025/05/09 09:59:34",
-      src: "",
-    },
-    {
-      key: "walk",
-      label: "walk",
-      type: "video" as const,
-      id: "2d8b8a2c-022-44fb-f38c-495f8c8a9e49",
-      fileType: "video",
-      updatedAt: "2025/06/30 09:31:01",
-      src: "",
-    },
-    {
-      key: "foot",
-      label: "foot",
-      type: "image" as const,
-      id: "2c12c8c4-b428-4a2b-b2f8-c946135df23a",
-      fileType: "image",
-      updatedAt: "2025/05/09 11:41:27",
-      src: "",
-    },
-    {
-      key: "beauty",
-      label: "beauty",
-      type: "image" as const,
-      id: "a9a4b893-b428-4a2b-b4c6-d2a4b4e40137",
-      fileType: "image",
-      updatedAt: "2025/05/09 11:30:50",
-      src: "",
-    },
-  ],
-
-  // 靴情報
-  shoe: {
-    id: "3ab8b0c7-1f1c-3-d3ce-a8b3-0f99a2701d65",
-    insolType: "beauty",
-    brand: "ナイキ",
-    fit: "ぴったり",
-    size: "240",
-    insolSize: "245",
-  },
-
-  // 痛み（左右）
-  pain: {
-    left: "",
-    right: "",
-  },
-
-  // タコ（左右）
-  callus: {
-    left: "",
-    right: "",
-  },
-
-  // 追加情報
-  additionalNote: "",
-
-  // アップロード情報
-  uploadInfo: {
-    id: "5cee8f5A-25b-6a4-a91b-3e1c5b5c3b5A8",
-    createdAt: "2026-05-09 07:07:41.374",
-    updatedAt: "2026-05-10 06:11:224",
-    orderedAt: "2026-03-16 08:11:843",
-    userId: "e1f11900-ef80-4e61-5af0-6c25b2b5f90e",
-    sortId: "43df500-33c2-4c46-a8df-187000e97c0c",
-  },
-
-  // 取扱店情報
-  store: {
-    storeId: "STORE-00142",
-    storeName: "ゴールドコースト歩きセミナー事務局",
-    storeNameKana: "ゴールドコーストアルキセミナーJIMUKYOKU",
-    contactPerson: "温永 陽生",
-    email: "info@goldcoast-seminar.example.com",
-    phone: "03-0000-0000",
-    prefecture: "東京都",
-    city: "渋谷区",
-    address: "神南1-2-3",
-    building: "",
-    uploadedBy: "温永 陽生",
-    uploadedAt: "2026-05-09 07:07:41",
-    licenseType: "GUEST",
-  },
-};
 
 // ─── ユーティリティ ───────────────────────────────────────────────────────
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -170,7 +26,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value?: string }) {
+function InfoRow({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="flex gap-2 mb-1.5 text-xs">
       <span className="shrink-0 text-gray-400 w-28">{label}</span>
@@ -191,7 +47,17 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
 }
 
 // ─── ファイルカード（動画・画像） ────────────────────────────────────────
-function FileCard({ file }: { file: typeof sampleDetail.files[0] }) {
+interface FileItem {
+  id: string;
+  label: string;
+  type: 'video' | 'image';
+  fileType: string | null;
+  kind: string | null;
+  updatedAt: string | null;
+  url: string | null;
+}
+
+function FileCard({ file }: { file: FileItem }) {
   return (
     <div className="mb-6">
       <p className="text-sm font-bold mb-2" style={{ color: "#1a1a1a" }}>
@@ -204,70 +70,184 @@ function FileCard({ file }: { file: typeof sampleDetail.files[0] }) {
         </div>
         <div className="flex gap-2">
           <span className="w-20 text-gray-400">ファイル種別</span>
-          <span className="text-gray-500">{file.fileType}</span>
+          <span className="text-gray-500">{file.fileType || "—"}</span>
         </div>
         <div className="flex gap-2">
           <span className="w-20 text-gray-400">更新日時</span>
-          <span className="text-gray-500">{file.updatedAt}</span>
+          <span className="text-gray-500">
+            {file.updatedAt
+              ? new Date(file.updatedAt).toLocaleString('ja-JP')
+              : "—"}
+          </span>
         </div>
       </div>
-
-      {/* メディアプレースホルダー */}
+      {/* メディア表示（URLがある場合は実際のメディア、ない場合はプレースホルダー） */}
       {file.type === "video" ? (
-        <div
-          className="w-full rounded-lg flex items-center justify-center"
-          style={{
-            background: "linear-gradient(135deg, #f0f0f0 0%, #e0e0e0 100%)",
-            aspectRatio: "9/16",
-            maxHeight: 420,
-            border: "1px solid #e5e5e5",
-          }}
-        >
-          <div className="text-center">
-            <div
-              className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-2"
-              style={{ backgroundColor: `${PINK}18`, border: `2px solid ${PINK}44` }}
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill={PINK}>
-                <polygon points="5,3 19,12 5,21" />
-              </svg>
+        file.url ? (
+          <video
+            src={file.url}
+            controls
+            className="w-full rounded-lg"
+            style={{ maxHeight: 420 }}
+          />
+        ) : (
+          <div
+            className="w-full rounded-lg flex items-center justify-center"
+            style={{
+              background: "linear-gradient(135deg, #f0f0f0 0%, #e0e0e0 100%)",
+              aspectRatio: "9/16",
+              maxHeight: 420,
+              border: "1px solid #e5e5e5",
+            }}
+          >
+            <div className="text-center">
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-2"
+                style={{ backgroundColor: `${PINK}18`, border: `2px solid ${PINK}44` }}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill={PINK}>
+                  <polygon points="5,3 19,12 5,21" />
+                </svg>
+              </div>
+              <p className="text-xs text-gray-400">{file.label} 動画</p>
             </div>
-            <p className="text-xs text-gray-400">{file.label} 動画</p>
           </div>
-        </div>
+        )
       ) : (
-        <div
-          className="w-full rounded-lg flex items-center justify-center"
-          style={{
-            background: "linear-gradient(135deg, #f7f7f7 0%, #ececec 100%)",
-            aspectRatio: "4/3",
-            maxHeight: 320,
-            border: "1px solid #e5e5e5",
-          }}
-        >
-          <div className="text-center">
-            <div
-              className="w-12 h-12 rounded-lg flex items-center justify-center mx-auto mb-2"
-              style={{ backgroundColor: `${PINK}18`, border: `2px solid ${PINK}44` }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={PINK} strokeWidth="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21,15 16,10 5,21" />
-              </svg>
+        file.url ? (
+          <img
+            src={file.url}
+            alt={file.label}
+            className="w-full rounded-lg object-cover"
+            style={{ maxHeight: 320 }}
+          />
+        ) : (
+          <div
+            className="w-full rounded-lg flex items-center justify-center"
+            style={{
+              background: "linear-gradient(135deg, #f7f7f7 0%, #ececec 100%)",
+              aspectRatio: "4/3",
+              maxHeight: 320,
+              border: "1px solid #e5e5e5",
+            }}
+          >
+            <div className="text-center">
+              <div
+                className="w-12 h-12 rounded-lg flex items-center justify-center mx-auto mb-2"
+                style={{ backgroundColor: `${PINK}18`, border: `2px solid ${PINK}44` }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={PINK} strokeWidth="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21,15 16,10 5,21" />
+                </svg>
+              </div>
+              <p className="text-xs text-gray-400">{file.label} 画像</p>
             </div>
-            <p className="text-xs text-gray-400">{file.label} 画像</p>
           </div>
-        </div>
+        )
       )}
     </div>
   );
 }
 
+// uploads_files → FileItem 変換
+function mapFileRecord(r: UploadFileRecord): FileItem {
+  const isVideo = r.file_type === 'video' || r.kind === 'oneleg' || r.kind === 'walk';
+  return {
+    id: r.id,
+    label: r.kind ?? r.file_type ?? r.id,
+    type: isVideo ? 'video' : 'image',
+    fileType: r.file_type,
+    kind: r.kind,
+    updatedAt: r.updated_at,
+    url: r.url,
+  };
+}
+
+// jsonb フィールドから文字列値を安全に取得するヘルパー
+function getStr(obj: Record<string, unknown> | null | undefined, key: string): string {
+  if (!obj) return '';
+  const v = obj[key];
+  if (v === null || v === undefined) return '';
+  return String(v);
+}
+
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function CustomerDetail() {
   const [, setLocation] = useLocation();
-  const d = sampleDetail;
+  const params = useParams<{ id: string }>();
+  const id = params.id;
+
+  const [upload, setUpload] = useState<UploadRecord | null>(null);
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [rec, fileRecs] = await Promise.all([
+          fetchUploadById(id),
+          fetchUploadFiles(id),
+        ]);
+        if (!cancelled) {
+          setUpload(rec);
+          setFiles(fileRecs.map(mapFileRecord));
+        }
+      } catch (e) {
+        if (!cancelled) setError('データの取得に失敗しました。');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#f5f5f5" }}>
+        <div className="flex items-center gap-2 text-sm" style={{ color: "#aaa" }}>
+          <RefreshCw size={14} className="animate-spin" />
+          読み込み中...
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !upload) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{ backgroundColor: "#f5f5f5" }}>
+        <p className="text-sm text-red-500">{error ?? 'データが見つかりません'}</p>
+        <button
+          onClick={() => setLocation("/")}
+          className="flex items-center gap-1.5 text-sm hover:opacity-70"
+          style={{ color: PINK }}
+        >
+          <ArrowLeft size={15} />
+          作製中一覧に戻る
+        </button>
+      </div>
+    );
+  }
+
+  // jsonb フィールドを取り出す
+  const customerInfo = upload.customer_info as Record<string, unknown> | null;
+  const purposeInfo = upload.purpose_info as Record<string, unknown> | null;
+  const shoeInfos = upload.shoe_infos as Record<string, unknown> | null;
+  const painInfo = upload.pain_info as Record<string, unknown> | null;
+  const takoInfo = upload.tako_info as Record<string, unknown> | null;
+
+  const createdAt = upload.created_at
+    ? new Date(upload.created_at).toLocaleString('ja-JP')
+    : '—';
+  const updatedAt = upload.updated_at
+    ? new Date(upload.updated_at).toLocaleString('ja-JP')
+    : '—';
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#f5f5f5" }}>
@@ -285,57 +265,49 @@ export default function CustomerDetail() {
 
         {/* ── ページヘッダー ── */}
         <div className="mb-1">
-          <p className="text-xs text-gray-400 mb-0.5">{d.createdAt}</p>
+          <p className="text-xs text-gray-400 mb-0.5">{createdAt}</p>
           <h1 className="text-xl font-bold mb-2" style={{ color: "#1a1a1a" }}>
-            {d.customerName}
+            {upload.insole_user_name ?? '（名前未設定）'}
           </h1>
-          <div className="flex items-center gap-1 mb-1">
-            <span className="text-xs text-gray-400">改修歴</span>
-            <span className="text-xs text-gray-500">{d.revisedHistory || "—"}</span>
-          </div>
-          <div className="flex gap-2 mb-4">
-            {d.categories.map((cat) => (
-              <span
-                key={cat}
-                className="text-xs px-2 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: `${PINK}15`, color: PINK, border: `1px solid ${PINK}40` }}
-              >
-                {cat}
-              </span>
-            ))}
-          </div>
+          {upload.insole_user_kana && (
+            <p className="text-sm text-gray-400 mb-2">{upload.insole_user_kana}</p>
+          )}
+          {/* インソール種別タグ */}
+          {(upload.selected_insoles ?? []).length > 0 && (
+            <div className="flex gap-2 mb-4 flex-wrap">
+              {(upload.selected_insoles ?? []).map((ins) => (
+                <span
+                  key={ins}
+                  className="text-xs px-2 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: `${PINK}15`, color: PINK, border: `1px solid ${PINK}40` }}
+                >
+                  {ins}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* ── 注文情報ブロック（横幅全体・左右2カラム） ── */}
+        {/* ── 注文情報ブロック（横幅全体） ── */}
         <Card className="mb-4">
-          <SectionTitle>注文・詳細組織情報</SectionTitle>
+          <SectionTitle>注文・アップロード情報</SectionTitle>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 左：注文情報 */}
             <div>
               <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>注文情報</p>
-              <InfoRow label="注文ID" value={d.order.orderId} />
-              <InfoRow label="注文取得日時" value={d.order.orderedAt} />
-              <InfoRow label="インソールID 1" value={d.order.insolId1} />
-              <InfoRow label="インソールID 2" value={d.order.insolId2} />
-              <InfoRow label="インソール種類1" value={d.order.insolType1} />
-              <InfoRow label="インソール種類2" value={d.order.insolType2} />
-              <InfoRow label="CSR担当" value={d.order.csr} />
+              <InfoRow label="アップロードID" value={upload.id} />
+              <InfoRow label="注文ID" value={upload.order_id} />
+              <InfoRow label="注文コード" value={upload.order_name} />
+              <InfoRow label="ゲストアップロード" value={upload.guest_tf ? 'true' : 'false'} />
+              <InfoRow label="前回デザイン" value={upload.previous_design_tf ? 'true' : 'false'} />
+              <InfoRow label="ステータス" value={upload.status} />
+              <InfoRow label="作成日時" value={createdAt} />
+              <InfoRow label="更新日時" value={updatedAt} />
             </div>
-            {/* 右：取扱店情報 */}
             <div>
-              <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>取扱店情報</p>
-              <InfoRow label="取扱店ID" value={d.store.storeId} />
-              <InfoRow label="取扱店名" value={d.store.storeName} />
-              <InfoRow label="取扱店名（カナ）" value={d.store.storeNameKana} />
-              <InfoRow label="担当者名" value={d.store.contactPerson} />
-              <InfoRow label="メールアドレス" value={d.store.email} />
-              <InfoRow label="電話番号" value={d.store.phone} />
-              <InfoRow label="都道府県" value={d.store.prefecture} />
-              <InfoRow label="市区町村" value={d.store.city} />
-              <InfoRow label="住所" value={d.store.address} />
-              <InfoRow label="アップロード担当" value={d.store.uploadedBy} />
-              <InfoRow label="アップロード日時" value={d.store.uploadedAt} />
-              <InfoRow label="ライセンス種別" value={d.store.licenseType} />
+              <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>組織情報</p>
+              <InfoRow label="組織ID" value={upload.organization_id} />
+              <InfoRow label="ユーザーID" value={upload.user_id} />
+              <InfoRow label="ルームカラー" value={upload.room_color} />
             </div>
           </div>
         </Card>
@@ -348,44 +320,69 @@ export default function CustomerDetail() {
             {/* 顧客情報 */}
             <Card>
               <SectionTitle>顧客情報</SectionTitle>
-              <InfoRow label="アップロードID" value={d.customer.uploadId} />
-              <InfoRow label="インソールID" value={d.customer.insolId} />
-              <InfoRow label="ゲストアップロード" value={d.customer.guestUpload} />
-              <InfoRow label="ライセンス注文" value={d.customer.licenseOrder} />
-              <InfoRow label="アップロードユーザー名" value={d.customer.uploadUserName} />
-              <InfoRow label="インソール利用者名" value={d.customer.insolUserName} />
-              <InfoRow label="インソール利用者名（ふりがな）" value={d.customer.insolUserNameKana} />
-              <InfoRow label="メールアドレス" value={d.customer.email} />
-              <InfoRow label="電話番号" value={d.customer.phone} />
+              <InfoRow label="インソール利用者名" value={upload.insole_user_name} />
+              <InfoRow label="ふりがな" value={upload.insole_user_kana} />
+              <InfoRow label="電話番号" value={getStr(customerInfo, 'phone')} />
             </Card>
 
             {/* 作製目的 */}
             <Card>
               <SectionTitle>作製目的</SectionTitle>
-              <InfoRow label="ID" value={d.purpose.id} />
-              <InfoRow label="目的注文" value={d.purpose.purposeOrder} />
-              <InfoRow label="作製目標" value={d.purpose.goal} />
-              <InfoRow label="プレイスタイル" value={d.purpose.playStyle} />
-              <InfoRow label="ゴルフ_正" value={d.purpose.golfRight} />
-              <InfoRow label="ゴルフ_右" value={d.purpose.golfLeft} />
+              {purposeInfo ? (
+                <>
+                  <InfoRow
+                    label="目的"
+                    value={
+                      Array.isArray(purposeInfo.purposes)
+                        ? (purposeInfo.purposes as string[]).join(', ')
+                        : getStr(purposeInfo, 'purposes')
+                    }
+                  />
+                  <InfoRow label="ライフスタイル" value={getStr(purposeInfo, 'lifestyle')} />
+                  <InfoRow label="プレイスタイル" value={getStr(purposeInfo, 'playstyle')} />
+                  <InfoRow label="その他" value={getStr(purposeInfo, 'otherPurpose')} />
+                </>
+              ) : (
+                <p className="text-xs text-gray-400">データなし</p>
+              )}
             </Card>
 
             {/* 配送先情報 */}
             <Card>
               <div className="flex items-center justify-between mb-1">
                 <SectionTitle>配送先情報</SectionTitle>
-                <button className="text-gray-300 hover:text-gray-500 transition-colors mb-3">
+                <button
+                  className="text-gray-300 hover:text-gray-500 transition-colors mb-3"
+                  onClick={() => {
+                    if (!customerInfo) return;
+                    const addr = [
+                      getStr(customerInfo, 'postalCode'),
+                      getStr(customerInfo, 'prefecture'),
+                      getStr(customerInfo, 'city'),
+                      getStr(customerInfo, 'address'),
+                      getStr(customerInfo, 'building'),
+                    ].filter(Boolean).join(' ');
+                    navigator.clipboard.writeText(addr).catch(() => {});
+                  }}
+                >
                   <Copy size={13} />
                 </button>
               </div>
-              <InfoRow label="id" value={d.shipping.id} />
-              <InfoRow label="氏名漢字名" value={d.shipping.nameKanji} />
-              <InfoRow label="氏名カタカナ名" value={d.shipping.nameKana} />
-              <InfoRow label="郵便番号" value={d.shipping.postalCode} />
-              <InfoRow label="都道府県" value={d.shipping.prefecture} />
-              <InfoRow label="市区町村" value={d.shipping.city} />
-              <InfoRow label="住所" value={d.shipping.address} />
-              <InfoRow label="マンション・アパート名" value={d.shipping.building} />
+              {customerInfo ? (
+                <>
+                  <InfoRow label="氏名" value={getStr(customerInfo, 'userName')} />
+                  <InfoRow label="ふりがな" value={getStr(customerInfo, 'userKana')} />
+                  <InfoRow label="配送先名" value={getStr(customerInfo, 'shipName')} />
+                  <InfoRow label="郵便番号" value={getStr(customerInfo, 'postalCode')} />
+                  <InfoRow label="都道府県" value={getStr(customerInfo, 'prefecture')} />
+                  <InfoRow label="市区町村" value={getStr(customerInfo, 'city')} />
+                  <InfoRow label="住所" value={getStr(customerInfo, 'address')} />
+                  <InfoRow label="建物名" value={getStr(customerInfo, 'building')} />
+                  <InfoRow label="電話番号" value={getStr(customerInfo, 'phone')} />
+                </>
+              ) : (
+                <p className="text-xs text-gray-400">データなし</p>
+              )}
             </Card>
           </div>
 
@@ -393,9 +390,13 @@ export default function CustomerDetail() {
           <div>
             <Card>
               <SectionTitle>ファイル</SectionTitle>
-              {d.files.map((file) => (
-                <FileCard key={file.key} file={file} />
-              ))}
+              {files.length === 0 ? (
+                <p className="text-xs text-gray-400">ファイルなし（Storage連携待ち）</p>
+              ) : (
+                files.map((file) => (
+                  <FileCard key={file.id} file={file} />
+                ))
+              )}
             </Card>
           </div>
 
@@ -404,50 +405,86 @@ export default function CustomerDetail() {
             {/* 靴情報 */}
             <Card>
               <SectionTitle>靴情報</SectionTitle>
-              <p className="text-xs font-semibold text-gray-500 mb-2">beauty</p>
-              <InfoRow label="ID" value={d.shoe.id} />
-              <InfoRow label="インソール型" value={d.shoe.insolType} />
-              <InfoRow label="ブランド" value={d.shoe.brand} />
-              <InfoRow label="フィット感" value={d.shoe.fit} />
-              <InfoRow label="サイズ" value={d.shoe.size} />
-              <InfoRow label="中底サイズ" value={d.shoe.insolSize} />
+              {shoeInfos ? (
+                Object.entries(shoeInfos).map(([insoleKey, info]) => {
+                  const si = info as Record<string, unknown>;
+                  return (
+                    <div key={insoleKey} className="mb-3">
+                      <p className="text-xs font-semibold text-gray-500 mb-1">{insoleKey}</p>
+                      <InfoRow label="ブランド" value={getStr(si, 'brand') || getStr(si, 'otherBrand')} />
+                      <InfoRow label="サイズ" value={getStr(si, 'size')} />
+                      <InfoRow label="インソールサイズ" value={getStr(si, 'insoleSize')} />
+                      <InfoRow label="フィット感" value={getStr(si, 'fit')} />
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-gray-400">データなし</p>
+              )}
             </Card>
 
             {/* 痛み */}
             <Card>
               <SectionTitle>痛み</SectionTitle>
-              <InfoRow label="左足" value={d.pain.left} />
-              <InfoRow label="右足" value={d.pain.right} />
+              {painInfo ? (
+                <>
+                  <InfoRow label="痛みあり" value={String(painInfo.hasPain ?? '—')} />
+                  {Array.isArray(painInfo.entries) && (painInfo.entries as Record<string, unknown>[]).map((entry, i) => (
+                    <div key={i} className="mb-2 pl-2 border-l-2" style={{ borderColor: `${PINK}40` }}>
+                      <InfoRow
+                        label="部位"
+                        value={
+                          Array.isArray(entry.locations)
+                            ? (entry.locations as string[]).join(', ')
+                            : ''
+                        }
+                      />
+                      <InfoRow label="左右" value={getStr(entry, 'side')} />
+                      <InfoRow label="痛みの強さ" value={entry.faceScale != null ? String(entry.faceScale) : ''} />
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-xs text-gray-400">データなし</p>
+              )}
             </Card>
 
             {/* タコ */}
             <Card>
-              <SectionTitle>タコ</SectionTitle>
-              <InfoRow label="左足" value={d.callus.left} />
-              <InfoRow label="右足" value={d.callus.right} />
-            </Card>
-
-            {/* 追加情報 */}
-            <Card>
-              <SectionTitle>追加情報</SectionTitle>
-              <div className="text-xs text-gray-400 mb-1">作製担当者文章</div>
-              <div
-                className="min-h-16 rounded-md p-2 text-xs text-gray-600"
-                style={{ backgroundColor: "#fafafa", border: "1px solid #efefef" }}
-              >
-                {d.additionalNote || ""}
-              </div>
+              <SectionTitle>タコ・魚の目</SectionTitle>
+              {takoInfo ? (
+                <>
+                  <InfoRow
+                    label="左足"
+                    value={
+                      Array.isArray(takoInfo.leftPositions)
+                        ? (takoInfo.leftPositions as number[]).join(', ')
+                        : ''
+                    }
+                  />
+                  <InfoRow
+                    label="右足"
+                    value={
+                      Array.isArray(takoInfo.rightPositions)
+                        ? (takoInfo.rightPositions as number[]).join(', ')
+                        : ''
+                    }
+                  />
+                  <InfoRow label="その他" value={getStr(takoInfo, 'otherNote')} />
+                </>
+              ) : (
+                <p className="text-xs text-gray-400">データなし</p>
+              )}
             </Card>
 
             {/* アップロード情報 */}
             <Card>
               <SectionTitle>アップロード情報</SectionTitle>
-              <InfoRow label="id" value={d.uploadInfo.id} />
-              <InfoRow label="created_at" value={d.uploadInfo.createdAt} />
-              <InfoRow label="updated_at" value={d.uploadInfo.updatedAt} />
-              <InfoRow label="ordered_at" value={d.uploadInfo.orderedAt} />
-              <InfoRow label="user_id" value={d.uploadInfo.userId} />
-              <InfoRow label="sort_id" value={d.uploadInfo.sortId} />
+              <InfoRow label="id" value={upload.id} />
+              <InfoRow label="created_at" value={createdAt} />
+              <InfoRow label="updated_at" value={updatedAt} />
+              <InfoRow label="user_id" value={upload.user_id} />
+              <InfoRow label="organization_id" value={upload.organization_id} />
             </Card>
           </div>
         </div>
