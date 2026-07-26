@@ -135,3 +135,26 @@ export async function fetchUploadFiles(uploadId: string): Promise<UploadFileReco
   if (error) throw error;
   return (data ?? []) as UploadFileRecord[];
 }
+
+// ============================================================
+// 認証 - Magic Link
+// ============================================================
+export async function sendMagicLink(email: string): Promise<void> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: `${window.location.origin}/`,
+    },
+  });
+  if (error) throw error;
+}
+
+export async function signOut(): Promise<void> {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+export async function getCurrentUser() {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user ?? null;
+}
