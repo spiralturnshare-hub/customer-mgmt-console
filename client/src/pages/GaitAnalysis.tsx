@@ -28,6 +28,12 @@ function signValue(key: string, side: Side): string {
   return `${key}:${side}`;
 }
 
+// analysis_signs.side列はDB上の用途が不明(1行1サインなのに単一値しか持てないCHECK制約)なため、
+// 「左右/両側どのボタンを出すか」はここで例外リストとして明示管理する。
+// 根拠: 2026-08-25 Glideスクリーンショットの目視確認。要スプレッドシート照合。
+const SIGN_KEYS_WITHOUT_SIDE = new Set(["no_arm_swing"]); // 左右概念なし、単一チェックボックス
+const SIGN_KEYS_LR_ONLY = new Set(["single_arm_swing", "sole_area_compare"]); // 「両側」ボタン無し
+
 function SideButtons({
   sign,
   selected,
@@ -37,8 +43,8 @@ function SideButtons({
   selected: Side | null;
   onSelect: (side: Side | null) => void;
 }) {
-  const allowsBoth = sign.side !== "LR" && sign.side !== "NONE";
-  const hasSide = sign.side !== "NONE";
+  const hasSide = !SIGN_KEYS_WITHOUT_SIDE.has(sign.key);
+  const allowsBoth = hasSide && !SIGN_KEYS_LR_ONLY.has(sign.key);
 
   if (!hasSide) {
     const checked = selected === "both";
