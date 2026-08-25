@@ -232,6 +232,25 @@ export async function fetchWorkflowByUploadId(uploadId: string): Promise<Product
   return data as ProductionWorkflow | null;
 }
 
+/**
+ * upload_idに紐づくproduction_workflowを取得し、無ければ最小構成で新規作成して返す。
+ * foot_analyses.production_id(NOT NULL)を満たすために、動作分析の保存前に必ず呼ぶ。
+ */
+export async function ensureProductionWorkflow(
+  uploadId: string,
+  orderId: string | null
+): Promise<ProductionWorkflow> {
+  const existing = await fetchWorkflowByUploadId(uploadId);
+  if (existing) return existing;
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .insert({ upload_id: uploadId, order_id: orderId })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProductionWorkflow;
+}
+
 const STEP_LABELS: Record<WorkflowStep, string> = {
   measure: '計測',
   analy: '分析',
@@ -367,6 +386,7 @@ export async function saveDetectedSigns(
   uploadId: string,
   orderId: string | null,
   userId: string | null,
+  productionId: string,
   detectedSigns: string[]
 ): Promise<FootAnalysis> {
   const existing = await fetchFootAnalysisByUploadId(uploadId);
@@ -383,7 +403,7 @@ export async function saveDetectedSigns(
   }
   const { data, error } = await supabase
     .from('foot_analyses')
-    .insert({ upload_id: uploadId, order_id: orderId, user_id: userId, ...patch })
+    .insert({ upload_id: uploadId, order_id: orderId, user_id: userId, production_id: productionId, ...patch })
     .select()
     .single();
   if (error) throw error;

@@ -16,6 +16,7 @@ import {
   saveDetectedSigns,
   completeFootAnalysis,
   fetchCurrentMember,
+  ensureProductionWorkflow,
   type AnalysisSign,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
@@ -110,6 +111,7 @@ export default function GaitAnalysis() {
   const [selections, setSelections] = useState<Record<string, Side | null>>({});
   const [footAnalysisId, setFootAnalysisId] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [productionId, setProductionId] = useState<string | null>(null);
   const [customerUserId, setCustomerUserId] = useState<string | null>(null);
   const [memberId, setMemberId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +134,10 @@ export default function GaitAnalysis() {
         setSigns(signList);
         setOrderId(upload?.order_id ?? null);
         setCustomerUserId(upload?.user_id ?? null);
+
+        const workflow = await ensureProductionWorkflow(uploadId, upload?.order_id ?? null);
+        if (cancelled) return;
+        setProductionId(workflow.id);
 
         const initial: Record<string, Side | null> = {};
         if (analysis?.detected_signs) {
@@ -167,18 +173,19 @@ export default function GaitAnalysis() {
   }, [signs]);
 
   async function persist(next: Record<string, Side | null>, markCompleted: boolean) {
-    if (!uploadId) return;
+    if (!uploadId || !productionId) return;
     setSaving(true);
     try {
       const detected = Object.entries(next)
         .filter(([, side]) => side)
         .map(([key, side]) => signValue(key, side as Side));
-      const result = await saveDetectedSigns(uploadId, orderId, customerUserId, detected);
+      const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected);
       setFootAnalysisId(result.id);
       if (markCompleted) {
         await completeFootAnalysis(result.id, memberId);
       }
     } catch (e) {
+      console.error("saveDetectedSigns failed:", e);
       setError("保存に失敗しました。");
     } finally {
       setSaving(false);
