@@ -36,7 +36,8 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 内容: seed SQLのside値を'-'固定に変更、左右/両側ボタンの出し分けをフロントエンドの例外リストに変更
 
 ### CP4 (2026-08-25 動作分析「保存に失敗しました」バグ修正)
-- 変更前コミット: `1685734`(CP3)
+- コミット: `53c86e0`
+- Vercel Production: https://customer-mgmt-console-3geuvcrh2-spiral-turn.vercel.app
 - 内容: `foot_analyses.production_id`(NOT NULL、`production_workflows.id`への外部キー)を`saveDetectedSigns`のinsertが渡していなかったのが原因と判明(FK確認済み)。`ensureProductionWorkflow()`を追加し、GaitAnalysis画面の読み込み時に`production_workflows`レコードを取得/作成してから保存するよう修正。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
