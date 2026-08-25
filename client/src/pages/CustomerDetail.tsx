@@ -187,55 +187,86 @@ function getStr(obj: Record<string, unknown> | null | undefined, key: string): s
 }
 
 // ─── 工程進捗バー（計測/分析/設計/作製/発送） ─────────────────────────────
+// 設計思想(2026-08-25確定): 各工程カードは「ラベル + その工程の機能を開くボタン」を
+// 同じ枠内に内包する。完了後は枠内に完了日時・担当者名を表示する。
+// 今後追加する計測・設計・発送の機能ボタンも同じ型(WorkflowStepAction)で差し込む。
+export interface WorkflowStepAction {
+  label: string;
+  onClick: () => void;
+}
+
 function WorkflowProgressBar({
   steps,
   pendingStep,
   onToggle,
+  actions,
 }: {
   steps: WorkflowStepDisplay[];
   pendingStep: WorkflowStep | null;
   onToggle: (step: WorkflowStep, nextDone: boolean) => void;
+  actions?: Partial<Record<WorkflowStep, WorkflowStepAction>>;
 }) {
   return (
     <Card className="mb-4">
       <SectionTitle>工程進捗</SectionTitle>
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
         {steps.map((s) => {
           const isPending = pendingStep === s.step;
+          const action = actions?.[s.step];
           return (
-            <button
+            <div
               key={s.step}
-              type="button"
-              disabled={isPending}
-              onClick={() => onToggle(s.step, !s.done)}
-              className="flex flex-col items-center gap-1.5 rounded-lg border p-3 transition-colors disabled:opacity-60"
+              className="rounded-lg border p-2.5 transition-colors"
               style={{
                 borderColor: s.done ? PINK : "#e5e5e5",
                 backgroundColor: s.done ? `${PINK}0d` : "#fff",
               }}
             >
-              <div
-                className="w-6 h-6 rounded-full flex items-center justify-center"
-                style={{
-                  backgroundColor: s.done ? PINK : "#f0f0f0",
-                  border: s.done ? "none" : "1px solid #ddd",
-                }}
-              >
-                {isPending ? (
-                  <Loader2 size={13} className="animate-spin text-gray-400" />
-                ) : s.done ? (
-                  <Check size={13} color="#fff" strokeWidth={3} />
-                ) : null}
+              <div className="flex items-center justify-between gap-1 mb-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => onToggle(s.step, !s.done)}
+                    title="手動でチェックを切り替える"
+                    className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center disabled:opacity-60"
+                    style={{
+                      backgroundColor: s.done ? PINK : "#f0f0f0",
+                      border: s.done ? "none" : "1px solid #ddd",
+                    }}
+                  >
+                    {isPending ? (
+                      <Loader2 size={11} className="animate-spin text-gray-400" />
+                    ) : s.done ? (
+                      <Check size={11} color="#fff" strokeWidth={3} />
+                    ) : null}
+                  </button>
+                  <span className="text-xs font-bold truncate" style={{ color: s.done ? PINK : "#888" }}>
+                    {s.label}
+                  </span>
+                </div>
+                {action && (
+                  <button
+                    type="button"
+                    onClick={action.onClick}
+                    className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md whitespace-nowrap"
+                    style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+                  >
+                    {action.label}
+                  </button>
+                )}
               </div>
-              <span className="text-xs font-bold" style={{ color: s.done ? PINK : "#888" }}>
-                {s.label}
-              </span>
-              <span className="text-[10px] text-gray-400 text-center leading-tight">
-                {s.done
-                  ? `${s.at ? new Date(s.at).toLocaleDateString('ja-JP') : ''}${s.byName ? `\n${s.byName}` : ''}`
-                  : '未実施'}
-              </span>
-            </button>
+              <div className="text-[10px] text-gray-400 leading-tight pl-[26px]">
+                {s.done ? (
+                  <>
+                    {s.at ? new Date(s.at).toLocaleString('ja-JP') : ''}
+                    {s.byName && <><br />{s.byName}</>}
+                  </>
+                ) : (
+                  '未実施'
+                )}
+              </div>
+            </div>
           );
         })}
       </div>
@@ -387,21 +418,16 @@ export default function CustomerDetail() {
         </div>
 
         {/* ── 工程進捗（計測/分析/設計/作製/発送） ── */}
+        {/* 各カードにその工程の機能ボタンを内包する設計(2026-08-25確定)。
+            計測・設計・発送のボタンは対応機能の実装時に追加する。 */}
         <WorkflowProgressBar
           steps={stepDisplays}
           pendingStep={pendingStep}
           onToggle={handleToggleStep}
+          actions={{
+            analy: { label: '動作分析を開く', onClick: () => setLocation(`/customer/${id}/analysis`) },
+          }}
         />
-
-        {/* ── 動作分析へのショートカット ── */}
-        <button
-          type="button"
-          onClick={() => setLocation(`/customer/${id}/analysis`)}
-          className="w-full mb-4 flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold transition-colors hover:opacity-80"
-          style={{ borderColor: `${PINK}55`, color: PINK, backgroundColor: `${PINK}0a` }}
-        >
-          動作分析を開く
-        </button>
 
         {/* ── 注文情報ブロック（横幅全体） ── */}
         <Card className="mb-4">
