@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import CustomerDetail from "./pages/CustomerDetail";
+import GaitAnalysis from "./pages/GaitAnalysis";
 import SignIn from "./pages/SignIn";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
@@ -32,6 +33,9 @@ function Router() {
       </Route>
       <Route path={"/customer/:id"}>
         <AuthGuard><CustomerDetail /></AuthGuard>
+      </Route>
+      <Route path={"/customer/:id/analysis"}>
+        <AuthGuard><GaitAnalysis /></AuthGuard>
       </Route>
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

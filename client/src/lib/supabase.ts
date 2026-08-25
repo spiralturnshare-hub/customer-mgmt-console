@@ -158,3 +158,255 @@ export async function getCurrentUser() {
   const { data: { session } } = await supabase.auth.getSession();
   return session?.user ?? null;
 }
+
+// ============================================================
+// system_members - ログイン中の担当者情報
+// ============================================================
+export async function fetchCurrentMember(authUserId: string): Promise<{ id: string; name: string } | null> {
+  const { data, error } = await supabase
+    .from('system_members')
+    .select('id, name')
+    .eq('auth_user_id', authUserId)
+    .single();
+  if (error || !data) return null;
+  return data as { id: string; name: string };
+}
+
+async function fetchMemberNames(memberIds: string[]): Promise<Record<string, string>> {
+  const ids = Array.from(new Set(memberIds.filter(Boolean)));
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase
+    .from('system_members')
+    .select('id, name')
+    .in('id', ids);
+  if (error || !data) return {};
+  return Object.fromEntries(data.map((m: { id: string; name: string }) => [m.id, m.name]));
+}
+
+// ============================================================
+// production_workflows - 工程進捗(計測/分析/設計/作製/発送)
+// ============================================================
+export type WorkflowStep = 'measure' | 'analy' | 'design' | 'produce' | 'ship';
+
+export interface ProductionWorkflow {
+  id: string;
+  order_id: string | null;
+  upload_id: string | null;
+  measurement_id: string | null;
+  status: string | null;
+  measure_done: boolean | null;
+  measure_at: string | null;
+  measure_by: string | null;
+  analy_done: boolean | null;
+  analy_at: string | null;
+  analy_by: string | null;
+  design_done: boolean | null;
+  design_at: string | null;
+  design_by: string | null;
+  produce_done: boolean | null;
+  produce_at: string | null;
+  produce_by: string | null;
+  ship_done: boolean | null;
+  ship_at: string | null;
+  ship_by: string | null;
+  tracking_number: string | null;
+  shipped_at: string | null;
+}
+
+export interface WorkflowStepDisplay {
+  step: WorkflowStep;
+  label: string;
+  done: boolean;
+  at: string | null;
+  byName: string | null;
+}
+
+/** upload_idに紐づくproduction_workflowを取得(無ければnull) */
+export async function fetchWorkflowByUploadId(uploadId: string): Promise<ProductionWorkflow | null> {
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .select('*')
+    .eq('upload_id', uploadId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as ProductionWorkflow | null;
+}
+
+const STEP_LABELS: Record<WorkflowStep, string> = {
+  measure: '計測',
+  analy: '分析',
+  design: '設計',
+  produce: '作製',
+  ship: '発送',
+};
+
+/** ProductionWorkflow → 画面表示用の5ステップ配列(担当者名を解決済み) */
+export async function toStepDisplays(wf: ProductionWorkflow | null): Promise<WorkflowStepDisplay[]> {
+  const steps: WorkflowStep[] = ['measure', 'analy', 'design', 'produce', 'ship'];
+  const byIds = steps.map((s) => wf?.[`${s}_by` as keyof ProductionWorkflow] as string | null).filter(Boolean) as string[];
+  const names = await fetchMemberNames(byIds);
+  return steps.map((s) => ({
+    step: s,
+    label: STEP_LABELS[s],
+    done: Boolean(wf?.[`${s}_done` as keyof ProductionWorkflow]),
+    at: (wf?.[`${s}_at` as keyof ProductionWorkflow] as string | null) ?? null,
+    byName: (() => {
+      const byId = wf?.[`${s}_by` as keyof ProductionWorkflow] as string | null;
+      return byId ? (names[byId] ?? null) : null;
+    })(),
+  }));
+}
+
+/**
+ * 工程ステップの完了状態を切り替える。
+ * ONにする時は現在日時+担当者を記録、OFFに戻す時はクリアする。
+ * production_workflowsレコードが無い場合はuploadIdを起点に新規作成する。
+ */
+export async function toggleWorkflowStep(
+  uploadId: string,
+  orderId: string | null,
+  step: WorkflowStep,
+  nextDone: boolean,
+  memberId: string | null
+): Promise<ProductionWorkflow> {
+  const patch: Record<string, unknown> = {
+    [`${step}_done`]: nextDone,
+    [`${step}_at`]: nextDone ? new Date().toISOString() : null,
+    [`${step}_by`]: nextDone ? memberId : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const existing = await fetchWorkflowByUploadId(uploadId);
+  if (existing) {
+    const { data, error } = await supabase
+      .from('production_workflows')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ProductionWorkflow;
+  }
+
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .insert({ upload_id: uploadId, order_id: orderId, ...patch })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProductionWorkflow;
+}
+
+// ============================================================
+// analysis_signs / foot_analyses - 動作分析
+// ============================================================
+export type SignSide = 'left' | 'right' | 'both';
+
+export interface AnalysisSign {
+  key: string;
+  side: string | null;
+  region: string | null;
+  header: string | null;
+  title: string;
+  p_analytics: string | null;
+  p_measure: string | null;
+  exercise_header: string | null;
+  howto: string | null;
+  caution: string | null;
+  frequency: string | null;
+  image_url: string | null;
+  point: number | null;
+  display_index: number | null;
+}
+
+export interface FootAnalysis {
+  id: string;
+  order_id: string | null;
+  upload_id: string | null;
+  user_id: string | null;
+  detected_signs: string[] | null;
+  total_score: number | null;
+  deduction_score: number | null;
+  walk_video_url: string | null;
+  item_video1_url: string | null;
+  item_video2_url: string | null;
+  is_completed: boolean | null;
+  completed_at: string | null;
+  editor_user_id: string | null;
+  operator_member_id: string | null;
+  analyzed_at: string | null;
+}
+
+/** サインのマスタ一覧を表示順で取得 */
+export async function fetchAnalysisSigns(): Promise<AnalysisSign[]> {
+  const { data, error } = await supabase
+    .from('analysis_signs')
+    .select('*')
+    .order('display_index', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as AnalysisSign[];
+}
+
+/** upload_idに紐づく分析結果を取得(無ければnull) */
+export async function fetchFootAnalysisByUploadId(uploadId: string): Promise<FootAnalysis | null> {
+  const { data, error } = await supabase
+    .from('foot_analyses')
+    .select('*')
+    .eq('upload_id', uploadId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as FootAnalysis | null;
+}
+
+/**
+ * 検出サイン(detected_signsのキー配列。例: "shoulder_swing_left"のように
+ * サインkeyとside(left/right/both)を組み合わせたIDで保存する)を保存する。
+ * 未完成(下書き)保存であり、is_completed確定は別途明示的に行う。
+ */
+export async function saveDetectedSigns(
+  uploadId: string,
+  orderId: string | null,
+  userId: string | null,
+  detectedSigns: string[]
+): Promise<FootAnalysis> {
+  const existing = await fetchFootAnalysisByUploadId(uploadId);
+  const patch = { detected_signs: detectedSigns, updated_at: new Date().toISOString() };
+  if (existing) {
+    const { data, error } = await supabase
+      .from('foot_analyses')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as FootAnalysis;
+  }
+  const { data, error } = await supabase
+    .from('foot_analyses')
+    .insert({ upload_id: uploadId, order_id: orderId, user_id: userId, ...patch })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as FootAnalysis;
+}
+
+/** 分析完了として確定する(完了フラグ+完了日時+担当者を記録) */
+export async function completeFootAnalysis(
+  footAnalysisId: string,
+  operatorMemberId: string | null
+): Promise<FootAnalysis> {
+  const { data, error } = await supabase
+    .from('foot_analyses')
+    .update({
+      is_completed: true,
+      completed_at: new Date().toISOString(),
+      analyzed_at: new Date().toISOString(),
+      operator_member_id: operatorMemberId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', footAnalysisId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as FootAnalysis;
+}

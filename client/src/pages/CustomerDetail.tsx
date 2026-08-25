@@ -7,10 +7,23 @@
  *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+アップロード情報
  */
 
-import { ArrowLeft, Copy, RefreshCw } from "lucide-react";
+import { ArrowLeft, Copy, RefreshCw, Check, Loader2 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { useEffect, useState } from "react";
-import { fetchUploadById, fetchUploadFiles, type UploadRecord, type UploadFileRecord } from "@/lib/supabase";
+import {
+  fetchUploadById,
+  fetchUploadFiles,
+  fetchWorkflowByUploadId,
+  toStepDisplays,
+  toggleWorkflowStep,
+  fetchCurrentMember,
+  type UploadRecord,
+  type UploadFileRecord,
+  type ProductionWorkflow,
+  type WorkflowStepDisplay,
+  type WorkflowStep,
+} from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 
 const PINK = "#D62598";
 
@@ -173,16 +186,79 @@ function getStr(obj: Record<string, unknown> | null | undefined, key: string): s
   return String(v);
 }
 
+// ─── 工程進捗バー（計測/分析/設計/作製/発送） ─────────────────────────────
+function WorkflowProgressBar({
+  steps,
+  pendingStep,
+  onToggle,
+}: {
+  steps: WorkflowStepDisplay[];
+  pendingStep: WorkflowStep | null;
+  onToggle: (step: WorkflowStep, nextDone: boolean) => void;
+}) {
+  return (
+    <Card className="mb-4">
+      <SectionTitle>工程進捗</SectionTitle>
+      <div className="grid grid-cols-5 gap-2">
+        {steps.map((s) => {
+          const isPending = pendingStep === s.step;
+          return (
+            <button
+              key={s.step}
+              type="button"
+              disabled={isPending}
+              onClick={() => onToggle(s.step, !s.done)}
+              className="flex flex-col items-center gap-1.5 rounded-lg border p-3 transition-colors disabled:opacity-60"
+              style={{
+                borderColor: s.done ? PINK : "#e5e5e5",
+                backgroundColor: s.done ? `${PINK}0d` : "#fff",
+              }}
+            >
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center"
+                style={{
+                  backgroundColor: s.done ? PINK : "#f0f0f0",
+                  border: s.done ? "none" : "1px solid #ddd",
+                }}
+              >
+                {isPending ? (
+                  <Loader2 size={13} className="animate-spin text-gray-400" />
+                ) : s.done ? (
+                  <Check size={13} color="#fff" strokeWidth={3} />
+                ) : null}
+              </div>
+              <span className="text-xs font-bold" style={{ color: s.done ? PINK : "#888" }}>
+                {s.label}
+              </span>
+              <span className="text-[10px] text-gray-400 text-center leading-tight">
+                {s.done
+                  ? `${s.at ? new Date(s.at).toLocaleDateString('ja-JP') : ''}${s.byName ? `\n${s.byName}` : ''}`
+                  : '未実施'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function CustomerDetail() {
   const [, setLocation] = useLocation();
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const { user } = useAuth();
 
   const [upload, setUpload] = useState<UploadRecord | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [workflow, setWorkflow] = useState<ProductionWorkflow | null>(null);
+  const [stepDisplays, setStepDisplays] = useState<WorkflowStepDisplay[]>([]);
+  const [pendingStep, setPendingStep] = useState<WorkflowStep | null>(null);
+  const [memberId, setMemberId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -191,13 +267,16 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs] = await Promise.all([
+        const [rec, fileRecs, wf] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
+          fetchWorkflowByUploadId(id),
         ]);
         if (!cancelled) {
           setUpload(rec);
           setFiles(fileRecs.map(mapFileRecord));
+          setWorkflow(wf);
+          setStepDisplays(await toStepDisplays(wf));
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -207,6 +286,25 @@ export default function CustomerDetail() {
     })();
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    if (!user) return;
+    fetchCurrentMember(user.id).then((m) => setMemberId(m?.id ?? null));
+  }, [user]);
+
+  async function handleToggleStep(step: WorkflowStep, nextDone: boolean) {
+    if (!id) return;
+    setPendingStep(step);
+    try {
+      const updated = await toggleWorkflowStep(id, upload?.order_id ?? null, step, nextDone, memberId);
+      setWorkflow(updated);
+      setStepDisplays(await toStepDisplays(updated));
+    } catch (e) {
+      // 失敗時は表示を変更せず据え置く
+    } finally {
+      setPendingStep(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -287,6 +385,23 @@ export default function CustomerDetail() {
             </div>
           )}
         </div>
+
+        {/* ── 工程進捗（計測/分析/設計/作製/発送） ── */}
+        <WorkflowProgressBar
+          steps={stepDisplays}
+          pendingStep={pendingStep}
+          onToggle={handleToggleStep}
+        />
+
+        {/* ── 動作分析へのショートカット ── */}
+        <button
+          type="button"
+          onClick={() => setLocation(`/customer/${id}/analysis`)}
+          className="w-full mb-4 flex items-center justify-center gap-2 rounded-xl border py-3 text-sm font-bold transition-colors hover:opacity-80"
+          style={{ borderColor: `${PINK}55`, color: PINK, backgroundColor: `${PINK}0a` }}
+        >
+          動作分析を開く
+        </button>
 
         {/* ── 注文情報ブロック（横幅全体） ── */}
         <Card className="mb-4">
