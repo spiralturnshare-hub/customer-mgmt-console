@@ -40,4 +40,8 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - Vercel Production: https://customer-mgmt-console-3geuvcrh2-spiral-turn.vercel.app
 - 内容: `foot_analyses.production_id`(NOT NULL、`production_workflows.id`への外部キー)を`saveDetectedSigns`のinsertが渡していなかったのが原因と判明(FK確認済み)。`ensureProductionWorkflow()`を追加し、GaitAnalysis画面の読み込み時に`production_workflows`レコードを取得/作成してから保存するよう修正。
 
+### CP5 (2026-08-26 本日の開発着手前)
+- コミット: `0922d80`
+- 内容: 本日は「通信履歴(メール/LINE)ログ・再送UI」「足の計測UI」「配送管理UI」の3機能に着手予定。着手前のベースライン。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app

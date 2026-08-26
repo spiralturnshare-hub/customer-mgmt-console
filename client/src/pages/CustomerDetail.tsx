@@ -7,7 +7,7 @@
  *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+アップロード情報
  */
 
-import { ArrowLeft, Copy, RefreshCw, Check, Loader2 } from "lucide-react";
+import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { useEffect, useState } from "react";
 import {
@@ -17,11 +17,14 @@ import {
   toStepDisplays,
   toggleWorkflowStep,
   fetchCurrentMember,
+  fetchCommunicationLogsByUploadId,
+  resendCommunicationLog,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
   type WorkflowStepDisplay,
   type WorkflowStep,
+  type CommunicationLog,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -274,6 +277,99 @@ function WorkflowProgressBar({
   );
 }
 
+// ─── 通信履歴(メール/LINE送信ログ)・再送 ────────────────────────────────────
+// 2026-08-26: 由村様の決済完了メール未着インシデントを受けて追加。
+// 顧客詳細画面の一番下に配置(本人指定)。
+// 注意: Green側の実送信処理(フェーズ2)は未実装のため、再送は「pending状態の
+// 新規ログを登録する」動作のみ。実際の送信は送信処理本体の実装後に行われる。
+const STATUS_LABEL: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  sent: { label: "送信成功", color: "#1a9e5c", icon: <CheckCircle2 size={12} /> },
+  failed: { label: "送信失敗", color: "#d43f3f", icon: <XCircle size={12} /> },
+  pending: { label: "未送信", color: "#999", icon: <Clock size={12} /> },
+};
+
+function CommunicationLogSection({
+  logs,
+  resendingId,
+  onResend,
+}: {
+  logs: CommunicationLog[];
+  resendingId: string | null;
+  onResend: (log: CommunicationLog) => void;
+}) {
+  return (
+    <Card className="mt-4">
+      <SectionTitle>通信履歴(メール・LINE)</SectionTitle>
+      {logs.length === 0 ? (
+        <p className="text-xs text-gray-400">送信履歴はまだありません。</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-400 border-b" style={{ borderColor: "#eee" }}>
+                <th className="text-left font-normal py-2 pr-3 whitespace-nowrap">日時</th>
+                <th className="text-left font-normal py-2 pr-3 whitespace-nowrap">種別</th>
+                <th className="text-left font-normal py-2 pr-3 whitespace-nowrap">工程</th>
+                <th className="text-left font-normal py-2 pr-3">宛先</th>
+                <th className="text-left font-normal py-2 pr-3">内容</th>
+                <th className="text-left font-normal py-2 pr-3 whitespace-nowrap">ステータス</th>
+                <th className="text-left font-normal py-2 whitespace-nowrap">再送</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log) => {
+                const status = STATUS_LABEL[log.status] ?? STATUS_LABEL.pending;
+                const isResending = resendingId === log.id;
+                const isLine = log.notify_kind === "line";
+                return (
+                  <tr key={log.id} className="border-b" style={{ borderColor: "#f5f5f5" }}>
+                    <td className="py-2 pr-3 whitespace-nowrap text-gray-500">
+                      {log.created_at ? new Date(log.created_at).toLocaleString("ja-JP") : "—"}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1" style={{ color: isLine ? "#06C755" : "#555" }}>
+                        {isLine ? <MessageCircle size={12} /> : <Mail size={12} />}
+                        {log.notify_kind ?? "—"}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap text-gray-500">{log.notify_type ?? "—"}</td>
+                    <td className="py-2 pr-3 text-gray-700 break-all">{log.notify_to ?? "—"}</td>
+                    <td className="py-2 pr-3 text-gray-500 max-w-[240px] truncate" title={log.contents ?? undefined}>
+                      {log.contents ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1 font-medium" style={{ color: status.color }}>
+                        {status.icon}
+                        {status.label}
+                      </span>
+                      {log.resend_of_id && <span className="ml-1 text-[10px] text-gray-400">(再送)</span>}
+                    </td>
+                    <td className="py-2">
+                      <button
+                        type="button"
+                        disabled={isResending}
+                        onClick={() => onResend(log)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md disabled:opacity-50"
+                        style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+                      >
+                        {isResending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                        再送
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-[10px] text-gray-300 mt-3">
+        ※再送は送信待ちキューへの登録のみです。実際の送信処理はGreen側の実装完了後に有効になります。
+      </p>
+    </Card>
+  );
+}
+
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function CustomerDetail() {
   const [, setLocation] = useLocation();
@@ -291,6 +387,9 @@ export default function CustomerDetail() {
   const [pendingStep, setPendingStep] = useState<WorkflowStep | null>(null);
   const [memberId, setMemberId] = useState<string | null>(null);
 
+  const [commLogs, setCommLogs] = useState<CommunicationLog[]>([]);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -298,16 +397,18 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs, wf] = await Promise.all([
+        const [rec, fileRecs, wf, logs] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
           fetchWorkflowByUploadId(id),
+          fetchCommunicationLogsByUploadId(id),
         ]);
         if (!cancelled) {
           setUpload(rec);
           setFiles(fileRecs.map(mapFileRecord));
           setWorkflow(wf);
           setStepDisplays(await toStepDisplays(wf));
+          setCommLogs(logs);
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -334,6 +435,18 @@ export default function CustomerDetail() {
       // 失敗時は表示を変更せず据え置く
     } finally {
       setPendingStep(null);
+    }
+  }
+
+  async function handleResend(log: CommunicationLog) {
+    setResendingId(log.id);
+    try {
+      const created = await resendCommunicationLog(log, memberId);
+      setCommLogs((prev) => [created, ...prev]);
+    } catch (e) {
+      // 失敗時は一覧を変更せず据え置く
+    } finally {
+      setResendingId(null);
     }
   }
 
@@ -629,6 +742,9 @@ export default function CustomerDetail() {
             </Card>
           </div>
         </div>
+
+        {/* ── 通信履歴(メール・LINE)・再送(画面最下部、本人指定) ── */}
+        <CommunicationLogSection logs={commLogs} resendingId={resendingId} onResend={handleResend} />
       </div>
     </div>
   );

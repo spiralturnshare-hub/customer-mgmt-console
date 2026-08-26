@@ -410,6 +410,78 @@ export async function saveDetectedSigns(
   return data as FootAnalysis;
 }
 
+// ============================================================
+// production_notifications - 通信履歴(メール/LINE送信ログ)・再送
+// Glide prod_d_line_notify の受け入れ先。工程中に担当者が顧客へ送るLINE/メール通知の履歴。
+// 2026-08-26: status/resend_of_id列を追加(is_sentのみでは失敗を区別できないため)
+// ============================================================
+export type NotificationStatus = 'pending' | 'sent' | 'failed';
+
+export interface CommunicationLog {
+  id: string;
+  order_id: string | null;
+  production_workflow_id: string | null;
+  upload_id: string | null;
+  customer_id: string | null;
+  notify_type: string | null;
+  contents: string | null;
+  note: string | null;
+  notify_kind: string | null;
+  notify_to: string | null;
+  is_sent: boolean;
+  status: NotificationStatus;
+  is_custom_email: boolean;
+  editor_user_id: string | null;
+  resend_of_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** upload_idに紐づく通信履歴を新しい順に取得 */
+export async function fetchCommunicationLogsByUploadId(uploadId: string): Promise<CommunicationLog[]> {
+  const { data, error } = await supabase
+    .from('production_notifications')
+    .select('*')
+    .eq('upload_id', uploadId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as CommunicationLog[];
+}
+
+/**
+ * 通信履歴を再送キューに登録する。
+ * 注意: 現時点(2026-08-26)ではGreen側に実際の送信処理(メール/LINE送信本体)が
+ * まだ実装されていないため、この関数はstatus='pending'の新規レコードを作るのみで、
+ * 実際の送信はフェーズ2(送信処理本体の実装)完了後に行われる。
+ */
+export async function resendCommunicationLog(
+  original: CommunicationLog,
+  editorUserId: string | null
+): Promise<CommunicationLog> {
+  const { data, error } = await supabase
+    .from('production_notifications')
+    .insert({
+      order_id: original.order_id,
+      production_workflow_id: original.production_workflow_id,
+      upload_id: original.upload_id,
+      customer_id: original.customer_id,
+      notify_type: original.notify_type,
+      contents: original.contents,
+      notify_kind: original.notify_kind,
+      notify_to: original.notify_to,
+      is_sent: false,
+      status: 'pending',
+      is_custom_email: original.is_custom_email,
+      is_favorited: false,
+      editor_user_id: editorUserId,
+      resend_of_id: original.id,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CommunicationLog;
+}
+
 /** 分析完了として確定する(完了フラグ+完了日時+担当者を記録) */
 export async function completeFootAnalysis(
   footAnalysisId: string,
