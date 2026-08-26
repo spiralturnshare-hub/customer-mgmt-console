@@ -54,4 +54,9 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - Vercel Production: https://customer-mgmt-console-gr5cdvdor-spiral-turn.vercel.app
 - 内容: `upload_revisions`テーブル・`uploads_files.is_current`列・`update_upload_with_history`/`replace_upload_file` RPCを追加(マイグレーション`003_upload_revision_history.sql`実行済み)。顧客情報・作製目的・配送先情報・靴情報・痛み・タコの各カードをスタッフ編集可能にし、変更前スナップショットを必ず保存してから更新。写真・動画は差し替え時に旧ファイルを削除せず`is_current=false`で履歴保持。画面最下部に「変更履歴(データ改訂ログ)」セクションを追加。
 
+### CP8 (2026-08-26 配送管理(単件) 追加後)
+- コミット: (このコミット後に追記)
+- 内容: `production_workflows`に`saveTrackingNumber`/`toggleShipped`関数を追加。顧客詳細画面の工程進捗バー直下に「配送管理」カードを新設し、追跡番号の入力・保存、発送完了/取り消しを単件で行えるようにした。発送完了時は`ship_done`/`ship_at`/`ship_by`(工程進捗の一般形式)と`shipped_at`(発送実績専用列)を同時刻で記録。
+  - 注意: `shipment_batches`/`shipment_items`を使った「複数顧客を一括処理する」配送管理UI(docs/07-gait-analysis-and-workflow-ui.md記載の将来方針)は**今回のスコープ外**。本人からの詳細指示を待って別途実装する。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app

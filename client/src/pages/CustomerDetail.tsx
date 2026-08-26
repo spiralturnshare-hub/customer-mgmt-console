@@ -7,7 +7,7 @@
  *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+アップロード情報
  */
 
-import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock, Pencil, X, History, Upload } from "lucide-react";
+import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock, Pencil, X, History, Upload, Truck } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -16,6 +16,8 @@ import {
   fetchWorkflowByUploadId,
   toStepDisplays,
   toggleWorkflowStep,
+  saveTrackingNumber,
+  toggleShipped,
   fetchCurrentMember,
   fetchCommunicationLogsByUploadId,
   resendCommunicationLog,
@@ -314,6 +316,89 @@ function WorkflowProgressBar({
           );
         })}
       </div>
+    </Card>
+  );
+}
+
+// ─── 配送管理(単件) ─────────────────────────────────────────────────────
+// 2026-08-26: 発送は今後「一覧から複数顧客をまとめて処理」する一括UIを別途構築予定
+// (docs/07-gait-analysis-and-workflow-ui.md参照、本人から詳細指示待ち)。
+// 今回はそれとは独立した、この画面単体での追跡番号入力・発送完了マークのみ。
+function ShippingSection({
+  workflow,
+  trackingInput,
+  onTrackingInputChange,
+  onSaveTracking,
+  savingTracking,
+  onToggleShipped,
+  togglingShip,
+}: {
+  workflow: ProductionWorkflow | null;
+  trackingInput: string;
+  onTrackingInputChange: (v: string) => void;
+  onSaveTracking: () => void;
+  savingTracking: boolean;
+  onToggleShipped: (nextDone: boolean) => void;
+  togglingShip: boolean;
+}) {
+  const shipped = Boolean(workflow?.ship_done);
+  return (
+    <Card className="mb-4">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Truck size={13} style={{ color: PINK }} />
+        <SectionTitle>配送管理</SectionTitle>
+      </div>
+      <div className="flex items-center gap-2 mb-3">
+        <span
+          className="text-[10px] font-bold px-2 py-1 rounded-md"
+          style={{
+            color: shipped ? "#1a9e5c" : "#999",
+            backgroundColor: shipped ? "#1a9e5c15" : "#f5f5f5",
+          }}
+        >
+          {shipped ? "発送済み" : "未発送"}
+        </span>
+        {shipped && workflow?.shipped_at && (
+          <span className="text-[10px] text-gray-400">
+            {new Date(workflow.shipped_at).toLocaleString('ja-JP')}
+          </span>
+        )}
+      </div>
+      <div className="flex items-end gap-2 mb-3">
+        <div className="flex-1">
+          <label className="text-[10px] text-gray-400 block mb-1">追跡番号</label>
+          <input
+            type="text"
+            value={trackingInput}
+            onChange={(e) => onTrackingInputChange(e.target.value)}
+            placeholder="未入力"
+            className="w-full text-xs border rounded-md px-2 py-1.5"
+            style={{ borderColor: "#ddd" }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onSaveTracking}
+          disabled={savingTracking}
+          className="text-[10px] font-bold px-3 py-1.5 rounded-md whitespace-nowrap disabled:opacity-60"
+          style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+        >
+          {savingTracking ? "保存中..." : "追跡番号を保存"}
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={() => onToggleShipped(!shipped)}
+        disabled={togglingShip}
+        className="text-xs font-bold px-3 py-2 rounded-lg disabled:opacity-60"
+        style={{
+          color: shipped ? "#d43f3f" : "#fff",
+          backgroundColor: shipped ? "#fff" : PINK,
+          border: shipped ? "1px solid #d43f3f55" : "none",
+        }}
+      >
+        {togglingShip ? "処理中..." : shipped ? "発送を取り消す" : "発送完了にする"}
+      </button>
     </Card>
   );
 }
@@ -630,6 +715,10 @@ export default function CustomerDetail() {
 
   const [revisions, setRevisions] = useState<UploadRevision[]>([]);
 
+  const [trackingInput, setTrackingInput] = useState('');
+  const [savingTracking, setSavingTracking] = useState(false);
+  const [togglingShip, setTogglingShip] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -649,6 +738,7 @@ export default function CustomerDetail() {
           setFiles(fileRecs.map(mapFileRecord));
           setWorkflow(wf);
           setStepDisplays(await toStepDisplays(wf));
+          setTrackingInput(wf?.tracking_number ?? '');
           setCommLogs(logs);
           setRevisions(revs);
         }
@@ -677,6 +767,33 @@ export default function CustomerDetail() {
       // 失敗時は表示を変更せず据え置く
     } finally {
       setPendingStep(null);
+    }
+  }
+
+  async function handleSaveTracking() {
+    if (!id) return;
+    setSavingTracking(true);
+    try {
+      const updated = await saveTrackingNumber(id, upload?.order_id ?? null, trackingInput.trim());
+      setWorkflow(updated);
+    } catch (e) {
+      // 失敗時は入力値を保持したまま据え置く
+    } finally {
+      setSavingTracking(false);
+    }
+  }
+
+  async function handleToggleShipped(nextDone: boolean) {
+    if (!id) return;
+    setTogglingShip(true);
+    try {
+      const updated = await toggleShipped(id, upload?.order_id ?? null, nextDone, memberId);
+      setWorkflow(updated);
+      setStepDisplays(await toStepDisplays(updated));
+    } catch (e) {
+      // 失敗時は表示を変更せず据え置く
+    } finally {
+      setTogglingShip(false);
     }
   }
 
@@ -812,6 +929,16 @@ export default function CustomerDetail() {
           actions={{
             analy: { label: '動作分析を開く', onClick: () => setLocation(`/customer/${id}/analysis`) },
           }}
+        />
+
+        <ShippingSection
+          workflow={workflow}
+          trackingInput={trackingInput}
+          onTrackingInputChange={setTrackingInput}
+          onSaveTracking={handleSaveTracking}
+          savingTracking={savingTracking}
+          onToggleShipped={handleToggleShipped}
+          togglingShip={togglingShip}
         />
 
         {/* ── 注文情報ブロック（横幅全体） ── */}

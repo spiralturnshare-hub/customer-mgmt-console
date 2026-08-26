@@ -438,6 +438,74 @@ export async function toggleWorkflowStep(
   return data as ProductionWorkflow;
 }
 
+/**
+ * 配送管理: 追跡番号を保存する(発送完了マークとは独立して、発送前でも編集可能)。
+ */
+export async function saveTrackingNumber(
+  uploadId: string,
+  orderId: string | null,
+  trackingNumber: string
+): Promise<ProductionWorkflow> {
+  const patch = { tracking_number: trackingNumber || null, updated_at: new Date().toISOString() };
+  const existing = await fetchWorkflowByUploadId(uploadId);
+  if (existing) {
+    const { data, error } = await supabase
+      .from('production_workflows')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ProductionWorkflow;
+  }
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .insert({ upload_id: uploadId, order_id: orderId, ...patch })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProductionWorkflow;
+}
+
+/**
+ * 配送管理: 発送完了/取り消しを切り替える。
+ * 完了時: ship_done/ship_at/ship_by(工程進捗の一般形式)に加え、
+ * 発送実績の専用列shipped_atも同時刻で記録する。
+ */
+export async function toggleShipped(
+  uploadId: string,
+  orderId: string | null,
+  nextDone: boolean,
+  memberId: string | null
+): Promise<ProductionWorkflow> {
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    ship_done: nextDone,
+    ship_at: nextDone ? now : null,
+    ship_by: nextDone ? memberId : null,
+    shipped_at: nextDone ? now : null,
+    updated_at: now,
+  };
+  const existing = await fetchWorkflowByUploadId(uploadId);
+  if (existing) {
+    const { data, error } = await supabase
+      .from('production_workflows')
+      .update(patch)
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data as ProductionWorkflow;
+  }
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .insert({ upload_id: uploadId, order_id: orderId, ...patch })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProductionWorkflow;
+}
+
 // ============================================================
 // analysis_signs / foot_analyses - 動作分析
 // ============================================================
