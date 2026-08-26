@@ -112,6 +112,114 @@ export async function updateUploadStatus(
 }
 
 // ============================================================
+// upload_revisions - 顧客アップロードデータの改訂履歴
+// 方針: docs/10-customer-mgmt-console-vision-and-data-revision-policy.md
+// 上書き・削除はせず、変更のたびにupload_revisionsへスナップショットを残す。
+// customer-mgmt-console(スタッフ側)は工程の状態に関わらず常に編集可能。
+// ============================================================
+export interface UploadRevision {
+  id: string;
+  upload_id: string;
+  revision_number: number;
+  snapshot: Record<string, unknown>;
+  changed_by_type: 'customer' | 'staff';
+  changed_by_id: string | null;
+  change_reason: string | null;
+  created_at: string;
+}
+
+/** 指定uploadの変更履歴を新しい順に取得 */
+export async function fetchUploadRevisions(uploadId: string): Promise<UploadRevision[]> {
+  const { data, error } = await supabase
+    .from('upload_revisions')
+    .select('*')
+    .eq('upload_id', uploadId)
+    .order('revision_number', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as UploadRevision[];
+}
+
+/**
+ * uploadsを更新する唯一の正式な経路(RPC経由)。
+ * patchには変更したい列のみを渡す(未指定の列は変わらない)。
+ * 呼び出し前に必ず変更前の状態をupload_revisionsへ保存してから更新するため、
+ * このRPC以外でuploadsへUPDATEをかけないこと。
+ */
+export async function updateUploadWithHistory(
+  uploadId: string,
+  patch: Partial<
+    Pick<
+      UploadRecord,
+      | 'order_name' | 'status' | 'insole_user_name' | 'insole_user_kana' | 'room_color'
+      | 'selected_insoles' | 'shoe_infos' | 'pain_info' | 'purpose_info' | 'tako_info' | 'customer_info'
+    >
+  >,
+  changedById: string | null,
+  changeReason?: string
+): Promise<UploadRecord> {
+  const { data, error } = await supabase.rpc('update_upload_with_history', {
+    p_upload_id: uploadId,
+    p_patch: patch,
+    p_changed_by_type: 'staff',
+    p_changed_by_id: changedById,
+    p_change_reason: changeReason ?? null,
+  });
+  if (error) throw error;
+  return data as UploadRecord;
+}
+
+/**
+ * スタッフによる写真・動画の差し替え用ストレージアップロード。
+ * upload-center側と同じバケット(upsys)・パス規則(userSegment/live/uploadId/kind/fileId/filename)を用い、
+ * upsert:falseで既存ファイルへの上書きを防ぐ(常に新しいパスに保存する)。
+ */
+export async function uploadReplacementFileToStorage(
+  file: File,
+  uploadId: string,
+  kind: string,
+  userId: string | null
+): Promise<{ path: string; url: string }> {
+  const userSegment = userId ?? 'staff';
+  const fileId = crypto.randomUUID();
+  const ext = file.name.split('.').pop() ?? '';
+  const filename = ext ? `${fileId}.${ext}` : fileId;
+  const storagePath = `${userSegment}/live/${uploadId}/${kind}/${fileId}/${filename}`;
+
+  const { error } = await supabase.storage.from('upsys').upload(storagePath, file, { upsert: false });
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage.from('upsys').getPublicUrl(storagePath);
+  return { path: storagePath, url: urlData.publicUrl };
+}
+
+/**
+ * 写真・動画を差し替える唯一の正式な経路(RPC経由)。
+ * 旧ファイルは削除せずis_current=falseとして残る。
+ */
+export async function replaceUploadFile(params: {
+  uploadId: string;
+  orderId: string | null;
+  userId: string | null;
+  kind: string;
+  fileType: string;
+  url: string;
+  changedById: string | null;
+}): Promise<UploadFileRecord> {
+  const { data, error } = await supabase.rpc('replace_upload_file', {
+    p_upload_id: params.uploadId,
+    p_order_id: params.orderId,
+    p_user_id: params.userId,
+    p_kind: params.kind,
+    p_file_type: params.fileType,
+    p_url: params.url,
+    p_changed_by_type: 'staff',
+    p_changed_by_id: params.changedById,
+  });
+  if (error) throw error;
+  return data as UploadFileRecord;
+}
+
+// ============================================================
 // uploads_files テーブル操作（ファイルURL取得）
 // ============================================================
 export interface UploadFileRecord {
@@ -124,12 +232,26 @@ export interface UploadFileRecord {
   kind: string | null;
   url: string | null;
   updated_at: string | null;
+  is_current: boolean;
 }
 
+/** 現在有効なファイルのみ(is_current=true)を取得(表示用) */
 export async function fetchUploadFiles(uploadId: string): Promise<UploadFileRecord[]> {
   const { data, error } = await supabase
     .from('uploads_files')
-    .select('id, order_id, upload_id, user_id, status, file_type, kind, url, updated_at')
+    .select('id, order_id, upload_id, user_id, status, file_type, kind, url, updated_at, is_current')
+    .eq('upload_id', uploadId)
+    .eq('is_current', true)
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as UploadFileRecord[];
+}
+
+/** 差し替えられた過去のファイル(is_current=false)も含めた全履歴を取得 */
+export async function fetchAllUploadFilesIncludingHistory(uploadId: string): Promise<UploadFileRecord[]> {
+  const { data, error } = await supabase
+    .from('uploads_files')
+    .select('id, order_id, upload_id, user_id, status, file_type, kind, url, updated_at, is_current')
     .eq('upload_id', uploadId)
     .order('updated_at', { ascending: false });
   if (error) throw error;

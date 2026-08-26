@@ -7,9 +7,9 @@
  *   - 3カラム: 左=顧客情報+作製目的+配送先 / 中央=ファイル（動画・画像） / 右=靴情報+痛み+タコ+アップロード情報
  */
 
-import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock, Pencil, X, History, Upload } from "lucide-react";
 import { useLocation, useParams } from "wouter";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchUploadById,
   fetchUploadFiles,
@@ -19,12 +19,17 @@ import {
   fetchCurrentMember,
   fetchCommunicationLogsByUploadId,
   resendCommunicationLog,
+  fetchUploadRevisions,
+  updateUploadWithHistory,
+  replaceUploadFile,
+  uploadReplacementFileToStorage,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
   type WorkflowStepDisplay,
   type WorkflowStep,
   type CommunicationLog,
+  type UploadRevision,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -73,12 +78,48 @@ interface FileItem {
   url: string | null;
 }
 
-function FileCard({ file }: { file: FileItem }) {
+function FileCard({ file, onReplace }: { file: FileItem; onReplace: (file: FileItem, newFile: File) => Promise<void> }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState(false);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const newFile = e.target.files?.[0];
+    e.target.value = "";
+    if (!newFile) return;
+    setReplacing(true);
+    try {
+      await onReplace(file, newFile);
+    } catch (err) {
+      // 失敗時は何もしない(元のファイルを維持)
+    } finally {
+      setReplacing(false);
+    }
+  }
+
   return (
     <div className="mb-6">
-      <p className="text-sm font-bold mb-2" style={{ color: "#1a1a1a" }}>
-        {file.label}
-      </p>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-bold" style={{ color: "#1a1a1a" }}>
+          {file.label}
+        </p>
+        <button
+          onClick={() => inputRef.current?.click()}
+          disabled={replacing}
+          className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md disabled:opacity-50"
+          style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+          title="差し替え(旧ファイルは削除せず履歴として残ります)"
+        >
+          {replacing ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+          差し替え
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={file.type === "video" ? "video/*" : "image/*"}
+          className="hidden"
+          onChange={handleFileChange}
+        />
+      </div>
       <div className="text-xs text-gray-400 mb-2 space-y-0.5">
         <div className="flex gap-2">
           <span className="w-20 text-gray-400">id</span>
@@ -370,6 +411,203 @@ function CommunicationLogSection({
   );
 }
 
+// ─── スタッフによるデータ編集(改訂履歴ポリシー対応) ─────────────────────
+// 方針: docs/10-customer-mgmt-console-vision-and-data-revision-policy.md
+// スタッフは工程の状態に関わらず常に編集可能。編集は上書きせず、
+// updateUploadWithHistory(RPC)経由で必ず変更前スナップショットを残してから保存する。
+
+// フラットな項目(顧客情報・作製目的・配送先情報)の編集カード
+function EditableInfoCard({
+  title,
+  fields,
+  onSave,
+}: {
+  title: string;
+  fields: { key: string; label: string; value: string }[];
+  onSave: (values: Record<string, string>) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  function startEdit() {
+    setDraft(Object.fromEntries(fields.map((f) => [f.key, f.value])));
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (e) {
+      // 失敗時は編集状態を維持し、再試行できるようにする
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <SectionTitle>{title}</SectionTitle>
+        {!editing ? (
+          <button onClick={startEdit} className="text-gray-300 hover:text-gray-500 mb-3" title="編集">
+            <Pencil size={13} />
+          </button>
+        ) : (
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setEditing(false)} disabled={saving} className="text-gray-300 hover:text-gray-500" title="キャンセル">
+              <X size={14} />
+            </button>
+            <button onClick={save} disabled={saving} className="text-xs font-bold" style={{ color: PINK }} title="保存">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            </button>
+          </div>
+        )}
+      </div>
+      {!editing
+        ? fields.map((f) => <InfoRow key={f.key} label={f.label} value={f.value} />)
+        : fields.map((f) => (
+            <div key={f.key} className="flex gap-2 mb-1.5 text-xs items-center">
+              <span className="shrink-0 text-gray-400 w-28">{f.label}</span>
+              <input
+                className="flex-1 border rounded px-2 py-1 text-xs"
+                style={{ borderColor: "#ddd" }}
+                value={draft[f.key] ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+    </Card>
+  );
+}
+
+// 複雑なネスト構造(靴情報・痛み・タコ)は、暫定としてJSON直接編集で対応する。
+// 今後、専用フォームへ段階的に置き換える想定。
+function JsonEditCard({
+  title,
+  value,
+  onSave,
+}: {
+  title: string;
+  value: Record<string, unknown> | null;
+  onSave: (value: Record<string, unknown>) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  function startEdit() {
+    setDraft(JSON.stringify(value ?? {}, null, 2));
+    setJsonError(null);
+    setEditing(true);
+  }
+
+  async function save() {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(draft);
+    } catch (e) {
+      setJsonError("JSONの形式が正しくありません");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(parsed);
+      setEditing(false);
+    } catch (e) {
+      // 失敗時は編集状態を維持
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <SectionTitle>{title}</SectionTitle>
+        {!editing ? (
+          <button onClick={startEdit} className="text-gray-300 hover:text-gray-500 mb-3" title="編集(JSON)">
+            <Pencil size={13} />
+          </button>
+        ) : (
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setEditing(false)} disabled={saving} className="text-gray-300 hover:text-gray-500" title="キャンセル">
+              <X size={14} />
+            </button>
+            <button onClick={save} disabled={saving} className="text-xs font-bold" style={{ color: PINK }} title="保存">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            </button>
+          </div>
+        )}
+      </div>
+      {editing ? (
+        <>
+          <textarea
+            className="w-full border rounded px-2 py-1 text-xs font-mono"
+            style={{ borderColor: jsonError ? "#d43f3f" : "#ddd", minHeight: 160 }}
+            value={draft}
+            onChange={(e) => { setDraft(e.target.value); setJsonError(null); }}
+          />
+          {jsonError && <p className="text-[10px] mt-1" style={{ color: "#d43f3f" }}>{jsonError}</p>}
+          <p className="text-[10px] text-gray-300 mt-1">※暫定的にJSON形式での直接編集です</p>
+        </>
+      ) : value ? (
+        <pre className="text-[11px] text-gray-500 whitespace-pre-wrap break-all">{JSON.stringify(value, null, 2)}</pre>
+      ) : (
+        <p className="text-xs text-gray-400">データなし</p>
+      )}
+    </Card>
+  );
+}
+
+// ─── 変更履歴(改訂履歴ポリシー) ────────────────────────────────────────
+function RevisionHistorySection({ revisions }: { revisions: UploadRevision[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  return (
+    <Card className="mt-4">
+      <SectionTitle>変更履歴(データ改訂ログ)</SectionTitle>
+      {revisions.length === 0 ? (
+        <p className="text-xs text-gray-400">変更履歴はまだありません。</p>
+      ) : (
+        <div className="space-y-1.5">
+          {revisions.map((r) => (
+            <div key={r.id} className="border rounded-lg" style={{ borderColor: "#eee" }}>
+              <button
+                className="w-full flex items-center justify-between px-3 py-2 text-xs"
+                onClick={() => setOpenId(openId === r.id ? null : r.id)}
+              >
+                <span className="flex items-center gap-2">
+                  <History size={12} className="text-gray-400" />
+                  <span className="font-semibold text-gray-600">#{r.revision_number}</span>
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    style={{
+                      color: r.changed_by_type === "customer" ? "#1a7fb8" : PINK,
+                      backgroundColor: r.changed_by_type === "customer" ? "#1a7fb818" : `${PINK}15`,
+                    }}
+                  >
+                    {r.changed_by_type === "customer" ? "顧客" : "スタッフ"}
+                  </span>
+                  {r.change_reason && <span className="text-gray-400">{r.change_reason}</span>}
+                </span>
+                <span className="text-gray-400">{new Date(r.created_at).toLocaleString("ja-JP")}</span>
+              </button>
+              {openId === r.id && (
+                <pre className="text-[10px] text-gray-500 whitespace-pre-wrap break-all px-3 pb-2 border-t" style={{ borderColor: "#f5f5f5" }}>
+                  {JSON.stringify(r.snapshot, null, 2)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function CustomerDetail() {
   const [, setLocation] = useLocation();
@@ -390,6 +628,8 @@ export default function CustomerDetail() {
   const [commLogs, setCommLogs] = useState<CommunicationLog[]>([]);
   const [resendingId, setResendingId] = useState<string | null>(null);
 
+  const [revisions, setRevisions] = useState<UploadRevision[]>([]);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -397,11 +637,12 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs, wf, logs] = await Promise.all([
+        const [rec, fileRecs, wf, logs, revs] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
           fetchWorkflowByUploadId(id),
           fetchCommunicationLogsByUploadId(id),
+          fetchUploadRevisions(id),
         ]);
         if (!cancelled) {
           setUpload(rec);
@@ -409,6 +650,7 @@ export default function CustomerDetail() {
           setWorkflow(wf);
           setStepDisplays(await toStepDisplays(wf));
           setCommLogs(logs);
+          setRevisions(revs);
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -448,6 +690,36 @@ export default function CustomerDetail() {
     } finally {
       setResendingId(null);
     }
+  }
+
+  // uploads本体(トップレベル列)を編集する共通ハンドラ。
+  // updateUploadWithHistory(RPC)が変更前スナップショットを自動保存してから更新するため、
+  // ここでは呼び出すだけでよい。保存後は本体と変更履歴を再取得する。
+  async function handleSaveUploadPatch(
+    patch: Parameters<typeof updateUploadWithHistory>[1],
+    reason?: string
+  ) {
+    if (!id) return;
+    const updated = await updateUploadWithHistory(id, patch, memberId, reason);
+    setUpload(updated);
+    setRevisions(await fetchUploadRevisions(id));
+  }
+
+  async function handleReplaceFile(file: FileItem, newFile: File) {
+    if (!id || !upload) return;
+    const { url } = await uploadReplacementFileToStorage(newFile, id, file.kind ?? file.id, memberId);
+    await replaceUploadFile({
+      uploadId: id,
+      orderId: upload.order_id,
+      userId: upload.user_id,
+      kind: file.kind ?? file.id,
+      fileType: file.type,
+      url,
+      changedById: memberId,
+    });
+    const [fileRecs, revs] = await Promise.all([fetchUploadFiles(id), fetchUploadRevisions(id)]);
+    setFiles(fileRecs.map(mapFileRecord));
+    setRevisions(revs);
   }
 
   if (loading) {
@@ -571,73 +843,78 @@ export default function CustomerDetail() {
 
           {/* ════ 左カラム ════ */}
           <div>
-            {/* 顧客情報 */}
-            <Card>
-              <SectionTitle>顧客情報</SectionTitle>
-              <InfoRow label="インソール利用者名" value={upload.insole_user_name} />
-              <InfoRow label="ふりがな" value={upload.insole_user_kana} />
-              <InfoRow label="電話番号" value={getStr(customerInfo, 'phone')} />
-            </Card>
+            {/* 顧客情報(編集可・改訂履歴あり) */}
+            <EditableInfoCard
+              title="顧客情報"
+              fields={[
+                { key: 'insole_user_name', label: 'インソール利用者名', value: upload.insole_user_name ?? '' },
+                { key: 'insole_user_kana', label: 'ふりがな', value: upload.insole_user_kana ?? '' },
+                { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
+              ]}
+              onSave={(v) =>
+                handleSaveUploadPatch(
+                  {
+                    insole_user_name: v.insole_user_name,
+                    insole_user_kana: v.insole_user_kana,
+                    customer_info: { ...(customerInfo ?? {}), phone: v.phone },
+                  },
+                  '顧客情報を編集'
+                )
+              }
+            />
 
-            {/* 作製目的 */}
-            <Card>
-              <SectionTitle>作製目的</SectionTitle>
-              {purposeInfo ? (
-                <>
-                  <InfoRow
-                    label="目的"
-                    value={
-                      Array.isArray(purposeInfo.purposes)
-                        ? (purposeInfo.purposes as string[]).join(', ')
-                        : getStr(purposeInfo, 'purposes')
-                    }
-                  />
-                  <InfoRow label="ライフスタイル" value={getStr(purposeInfo, 'lifestyle')} />
-                  <InfoRow label="プレイスタイル" value={getStr(purposeInfo, 'playstyle')} />
-                  <InfoRow label="その他" value={getStr(purposeInfo, 'otherPurpose')} />
-                </>
-              ) : (
-                <p className="text-xs text-gray-400">データなし</p>
-              )}
-            </Card>
+            {/* 作製目的(編集可・改訂履歴あり) */}
+            <EditableInfoCard
+              title="作製目的"
+              fields={[
+                {
+                  key: 'purposes',
+                  label: '目的',
+                  value: Array.isArray(purposeInfo?.purposes)
+                    ? (purposeInfo!.purposes as string[]).join(', ')
+                    : getStr(purposeInfo, 'purposes'),
+                },
+                { key: 'lifestyle', label: 'ライフスタイル', value: getStr(purposeInfo, 'lifestyle') },
+                { key: 'playstyle', label: 'プレイスタイル', value: getStr(purposeInfo, 'playstyle') },
+                { key: 'otherPurpose', label: 'その他', value: getStr(purposeInfo, 'otherPurpose') },
+              ]}
+              onSave={(v) =>
+                handleSaveUploadPatch(
+                  {
+                    purpose_info: {
+                      ...(purposeInfo ?? {}),
+                      purposes: v.purposes.split(',').map((s) => s.trim()).filter(Boolean),
+                      lifestyle: v.lifestyle,
+                      playstyle: v.playstyle,
+                      otherPurpose: v.otherPurpose,
+                    },
+                  },
+                  '作製目的を編集'
+                )
+              }
+            />
 
-            {/* 配送先情報 */}
-            <Card>
-              <div className="flex items-center justify-between mb-1">
-                <SectionTitle>配送先情報</SectionTitle>
-                <button
-                  className="text-gray-300 hover:text-gray-500 transition-colors mb-3"
-                  onClick={() => {
-                    if (!customerInfo) return;
-                    const addr = [
-                      getStr(customerInfo, 'postalCode'),
-                      getStr(customerInfo, 'prefecture'),
-                      getStr(customerInfo, 'city'),
-                      getStr(customerInfo, 'address'),
-                      getStr(customerInfo, 'building'),
-                    ].filter(Boolean).join(' ');
-                    navigator.clipboard.writeText(addr).catch(() => {});
-                  }}
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
-              {customerInfo ? (
-                <>
-                  <InfoRow label="氏名" value={getStr(customerInfo, 'userName')} />
-                  <InfoRow label="ふりがな" value={getStr(customerInfo, 'userKana')} />
-                  <InfoRow label="配送先名" value={getStr(customerInfo, 'shipName')} />
-                  <InfoRow label="郵便番号" value={getStr(customerInfo, 'postalCode')} />
-                  <InfoRow label="都道府県" value={getStr(customerInfo, 'prefecture')} />
-                  <InfoRow label="市区町村" value={getStr(customerInfo, 'city')} />
-                  <InfoRow label="住所" value={getStr(customerInfo, 'address')} />
-                  <InfoRow label="建物名" value={getStr(customerInfo, 'building')} />
-                  <InfoRow label="電話番号" value={getStr(customerInfo, 'phone')} />
-                </>
-              ) : (
-                <p className="text-xs text-gray-400">データなし</p>
-              )}
-            </Card>
+            {/* 配送先情報(編集可・改訂履歴あり) */}
+            <EditableInfoCard
+              title="配送先情報"
+              fields={[
+                { key: 'userName', label: '氏名', value: getStr(customerInfo, 'userName') },
+                { key: 'userKana', label: 'ふりがな', value: getStr(customerInfo, 'userKana') },
+                { key: 'shipName', label: '配送先名', value: getStr(customerInfo, 'shipName') },
+                { key: 'postalCode', label: '郵便番号', value: getStr(customerInfo, 'postalCode') },
+                { key: 'prefecture', label: '都道府県', value: getStr(customerInfo, 'prefecture') },
+                { key: 'city', label: '市区町村', value: getStr(customerInfo, 'city') },
+                { key: 'address', label: '住所', value: getStr(customerInfo, 'address') },
+                { key: 'building', label: '建物名', value: getStr(customerInfo, 'building') },
+                { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
+              ]}
+              onSave={(v) =>
+                handleSaveUploadPatch(
+                  { customer_info: { ...(customerInfo ?? {}), ...v } },
+                  '配送先情報を編集'
+                )
+              }
+            />
           </div>
 
           {/* ════ 中央カラム：ファイル ════ */}
@@ -648,7 +925,7 @@ export default function CustomerDetail() {
                 <p className="text-xs text-gray-400">ファイルなし（Storage連携待ち）</p>
               ) : (
                 files.map((file) => (
-                  <FileCard key={file.id} file={file} />
+                  <FileCard key={file.id} file={file} onReplace={handleReplaceFile} />
                 ))
               )}
             </Card>
@@ -656,80 +933,26 @@ export default function CustomerDetail() {
 
           {/* ════ 右カラム ════ */}
           <div>
-            {/* 靴情報 */}
-            <Card>
-              <SectionTitle>靴情報</SectionTitle>
-              {shoeInfos ? (
-                Object.entries(shoeInfos).map(([insoleKey, info]) => {
-                  const si = info as Record<string, unknown>;
-                  return (
-                    <div key={insoleKey} className="mb-3">
-                      <p className="text-xs font-semibold text-gray-500 mb-1">{insoleKey}</p>
-                      <InfoRow label="ブランド" value={getStr(si, 'brand') || getStr(si, 'otherBrand')} />
-                      <InfoRow label="サイズ" value={getStr(si, 'size')} />
-                      <InfoRow label="インソールサイズ" value={getStr(si, 'insoleSize')} />
-                      <InfoRow label="フィット感" value={getStr(si, 'fit')} />
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-xs text-gray-400">データなし</p>
-              )}
-            </Card>
+            {/* 靴情報(編集可・改訂履歴あり、複雑なネスト構造のため暫定JSON編集) */}
+            <JsonEditCard
+              title="靴情報"
+              value={shoeInfos}
+              onSave={(v) => handleSaveUploadPatch({ shoe_infos: v }, '靴情報を編集')}
+            />
 
-            {/* 痛み */}
-            <Card>
-              <SectionTitle>痛み</SectionTitle>
-              {painInfo ? (
-                <>
-                  <InfoRow label="痛みあり" value={String(painInfo.hasPain ?? '—')} />
-                  {Array.isArray(painInfo.entries) && (painInfo.entries as Record<string, unknown>[]).map((entry, i) => (
-                    <div key={i} className="mb-2 pl-2 border-l-2" style={{ borderColor: `${PINK}40` }}>
-                      <InfoRow
-                        label="部位"
-                        value={
-                          Array.isArray(entry.locations)
-                            ? (entry.locations as string[]).join(', ')
-                            : ''
-                        }
-                      />
-                      <InfoRow label="左右" value={getStr(entry, 'side')} />
-                      <InfoRow label="痛みの強さ" value={entry.faceScale != null ? String(entry.faceScale) : ''} />
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <p className="text-xs text-gray-400">データなし</p>
-              )}
-            </Card>
+            {/* 痛み(編集可・改訂履歴あり、暫定JSON編集) */}
+            <JsonEditCard
+              title="痛み"
+              value={painInfo}
+              onSave={(v) => handleSaveUploadPatch({ pain_info: v }, '痛みの情報を編集')}
+            />
 
-            {/* タコ */}
-            <Card>
-              <SectionTitle>タコ・魚の目</SectionTitle>
-              {takoInfo ? (
-                <>
-                  <InfoRow
-                    label="左足"
-                    value={
-                      Array.isArray(takoInfo.leftPositions)
-                        ? (takoInfo.leftPositions as number[]).join(', ')
-                        : ''
-                    }
-                  />
-                  <InfoRow
-                    label="右足"
-                    value={
-                      Array.isArray(takoInfo.rightPositions)
-                        ? (takoInfo.rightPositions as number[]).join(', ')
-                        : ''
-                    }
-                  />
-                  <InfoRow label="その他" value={getStr(takoInfo, 'otherNote')} />
-                </>
-              ) : (
-                <p className="text-xs text-gray-400">データなし</p>
-              )}
-            </Card>
+            {/* タコ(編集可・改訂履歴あり、暫定JSON編集) */}
+            <JsonEditCard
+              title="タコ・魚の目"
+              value={takoInfo}
+              onSave={(v) => handleSaveUploadPatch({ tako_info: v }, 'タコ・魚の目の情報を編集')}
+            />
 
             {/* アップロード情報 */}
             <Card>
@@ -742,6 +965,9 @@ export default function CustomerDetail() {
             </Card>
           </div>
         </div>
+
+        {/* ── 変更履歴(データ改訂ログ) ── */}
+        <RevisionHistorySection revisions={revisions} />
 
         {/* ── 通信履歴(メール・LINE)・再送(画面最下部、本人指定) ── */}
         <CommunicationLogSection logs={commLogs} resendingId={resendingId} onResend={handleResend} />
