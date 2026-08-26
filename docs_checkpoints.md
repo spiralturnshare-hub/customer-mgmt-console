@@ -60,7 +60,7 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - 注意: `shipment_batches`/`shipment_items`を使った「複数顧客を一括処理する」配送管理UI(docs/07-gait-analysis-and-workflow-ui.md記載の将来方針)は**今回のスコープ外**。本人からの詳細指示を待って別途実装する。
 
 ### CP9 (2026-08-26 foot-measureへの計測連携ボタン追加)
-- コミット: (このコミット後に追記)
+- コミット: `4bc876a`
 - 内容: 工程進捗バーの「計測」ステップに、別デプロイのfoot-measureアプリ(`https://foot-measure.vercel.app/measure?uploadId=...&orderId=...`)を新しいタブで開くボタンを追加(動作分析の`analy`ボタンと同じ`WorkflowStepAction`パターン)。foot-measure側は計測完了時に`production_workflows.measure_done`等を更新するため、その結果が本画面の工程進捗バーにそのまま反映される(追加の表示コード不要)。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
