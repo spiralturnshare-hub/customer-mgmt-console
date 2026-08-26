@@ -36,6 +36,8 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 
 const PINK = "#D62598";
+// foot-measure(足の計測アプリ、別デプロイ)への連携URL
+const FOOT_MEASURE_URL = "https://foot-measure.vercel.app";
 
 // ─── ユーティリティ ───────────────────────────────────────────────────────
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -927,6 +929,15 @@ export default function CustomerDetail() {
           pendingStep={pendingStep}
           onToggle={handleToggleStep}
           actions={{
+            measure: {
+              label: workflow?.measure_done ? '計測を確認する' : '計測を開始する',
+              onClick: () => {
+                if (!id) return;
+                const params = new URLSearchParams({ uploadId: id });
+                if (upload?.order_id) params.set('orderId', upload.order_id);
+                window.open(`${FOOT_MEASURE_URL}/measure?${params.toString()}`, '_blank', 'noopener,noreferrer');
+              },
+            },
             analy: { label: '動作分析を開く', onClick: () => setLocation(`/customer/${id}/analysis`) },
           }}
         />
