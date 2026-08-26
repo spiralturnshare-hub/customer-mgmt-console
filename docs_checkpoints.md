@@ -49,4 +49,9 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - Vercel Production: https://customer-mgmt-console-hrq72aa50-spiral-turn.vercel.app
 - 内容: `production_notifications`に`status`(pending/sent/failed)・`resend_of_id`列を追加(マイグレーション`002_production_notifications_status.sql`実行済み)。顧客詳細画面の最下部に送信履歴一覧・再送ボタンを実装。再送は現時点ではpendingキュー登録のみ(実送信処理は未実装、フェーズ2で対応予定)。
 
+### CP7 (2026-08-26 データ改訂履歴・スタッフ編集機能 追加後)
+- コミット: `3150f26`
+- Vercel Production: https://customer-mgmt-console-gr5cdvdor-spiral-turn.vercel.app
+- 内容: `upload_revisions`テーブル・`uploads_files.is_current`列・`update_upload_with_history`/`replace_upload_file` RPCを追加(マイグレーション`003_upload_revision_history.sql`実行済み)。顧客情報・作製目的・配送先情報・靴情報・痛み・タコの各カードをスタッフ編集可能にし、変更前スナップショットを必ず保存してから更新。写真・動画は差し替え時に旧ファイルを削除せず`is_current=false`で履歴保持。画面最下部に「変更履歴(データ改訂ログ)」セクションを追加。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
