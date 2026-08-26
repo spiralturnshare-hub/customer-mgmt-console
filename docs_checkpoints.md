@@ -44,4 +44,9 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - コミット: `0922d80`
 - 内容: 本日は「通信履歴(メール/LINE)ログ・再送UI」「足の計測UI」「配送管理UI」の3機能に着手予定。着手前のベースライン。
 
+### CP6 (2026-08-26 通信履歴ログ・再送UI 追加後)
+- コミット: `bcf8185`
+- Vercel Production: https://customer-mgmt-console-hrq72aa50-spiral-turn.vercel.app
+- 内容: `production_notifications`に`status`(pending/sent/failed)・`resend_of_id`列を追加(マイグレーション`002_production_notifications_status.sql`実行済み)。顧客詳細画面の最下部に送信履歴一覧・再送ボタンを実装。再送は現時点ではpendingキュー登録のみ(実送信処理は未実装、フェーズ2で対応予定)。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
