@@ -21,10 +21,13 @@ import {
   fetchCurrentMember,
   fetchCommunicationLogsByUploadId,
   resendCommunicationLog,
+  sendAnalysisResultNotification,
   fetchUploadRevisions,
   updateUploadWithHistory,
   replaceUploadFile,
   uploadReplacementFileToStorage,
+  fetchAnalysisSigns,
+  fetchFootAnalysisByUploadId,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
@@ -32,6 +35,8 @@ import {
   type WorkflowStep,
   type CommunicationLog,
   type UploadRevision,
+  type AnalysisSign,
+  type FootAnalysis,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -405,6 +410,113 @@ function ShippingSection({
   );
 }
 
+// ─── 動作分析結果(サマリー表示・再送) ───────────────────────────────────────
+// 2026-08-27: 別ページ(動作分析画面)への遷移が面倒という指摘を受け、
+// 結果サマリーと再送UIを顧客詳細トップ画面(通信履歴の直上)に表示するよう変更。
+// 詳細な検出サインの編集自体は引き続き別ページ(修正ボタン)で行う。
+const SIDE_LABEL: Record<string, string> = { left: '左', right: '右', both: '両側' };
+
+function AnalysisResultSection({
+  analysis,
+  signs,
+  onEdit,
+  emailInput,
+  onEmailInputChange,
+  onSend,
+  sending,
+  sentMsg,
+}: {
+  analysis: FootAnalysis | null;
+  signs: AnalysisSign[];
+  onEdit: () => void;
+  emailInput: string;
+  onEmailInputChange: (v: string) => void;
+  onSend: () => void;
+  sending: boolean;
+  sentMsg: string | null;
+}) {
+  const signByKey = new Map(signs.map((s) => [s.key, s]));
+  const detected = (analysis?.detected_signs ?? [])
+    .map((entry) => {
+      const [key, side] = entry.split(':');
+      const sign = signByKey.get(key);
+      if (!sign) return null;
+      return { title: sign.title, sideLabel: SIDE_LABEL[side] ?? side };
+    })
+    .filter((v): v is { title: string; sideLabel: string } => v !== null);
+
+  return (
+    <Card className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <SectionTitle>動作分析結果</SectionTitle>
+        <span
+          className="text-[10px] font-bold px-2 py-1 rounded-md"
+          style={{
+            color: analysis?.is_completed ? "#1a9e5c" : "#999",
+            backgroundColor: analysis?.is_completed ? "#1a9e5c15" : "#f5f5f5",
+          }}
+        >
+          {analysis?.is_completed ? "完了" : "未完了"}
+        </span>
+      </div>
+      {analysis?.analyzed_at && (
+        <p className="text-[10px] text-gray-400 mb-3">
+          最終更新: {new Date(analysis.analyzed_at).toLocaleString('ja-JP')}
+        </p>
+      )}
+      {detected.length === 0 ? (
+        <p className="text-xs text-gray-400 mb-3">検出されたサインはまだありません。</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-3">
+          {detected.map((d, i) => (
+            <div key={i} className="flex justify-between text-xs border-b pb-1" style={{ borderColor: "#f0f0f0" }}>
+              <span className="text-gray-500">{d.title}</span>
+              <span className="font-semibold" style={{ color: PINK }}>{d.sideLabel}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onEdit}
+        className="text-xs font-bold px-3 py-2 rounded-lg text-white mb-4"
+        style={{ backgroundColor: PINK }}
+      >
+        修正する
+      </button>
+
+      <div className="pt-3 border-t" style={{ borderColor: "#eee" }}>
+        <p className="text-[11px] font-semibold text-gray-600 mb-2">分析結果メールを送る</p>
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <input
+              type="email"
+              value={emailInput}
+              onChange={(e) => onEmailInputChange(e.target.value)}
+              placeholder="送信先メールアドレス"
+              className="w-full text-xs border rounded-md px-2 py-1.5"
+              style={{ borderColor: "#ddd" }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={sending || !emailInput.trim()}
+            className="text-[10px] font-bold px-3 py-1.5 rounded-md whitespace-nowrap disabled:opacity-60"
+            style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+          >
+            {sending ? "登録中..." : "送信キューに登録"}
+          </button>
+        </div>
+        {sentMsg && <p className="text-[10px] text-gray-400 mt-1.5">{sentMsg}</p>}
+        <p className="text-[10px] text-gray-400 mt-1.5">
+          登録済みのメールアドレス以外でも、ここに入力した任意の宛先に送信できます。
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 // ─── 通信履歴(メール/LINE送信ログ)・再送 ────────────────────────────────────
 // 2026-08-26: 由村様の決済完了メール未着インシデントを受けて追加。
 // 顧客詳細画面の一番下に配置(本人指定)。
@@ -721,6 +833,12 @@ export default function CustomerDetail() {
   const [savingTracking, setSavingTracking] = useState(false);
   const [togglingShip, setTogglingShip] = useState(false);
 
+  const [analysis, setAnalysis] = useState<FootAnalysis | null>(null);
+  const [analysisSigns, setAnalysisSigns] = useState<AnalysisSign[]>([]);
+  const [analysisEmailInput, setAnalysisEmailInput] = useState('');
+  const [sendingAnalysisEmail, setSendingAnalysisEmail] = useState(false);
+  const [analysisEmailSentMsg, setAnalysisEmailSentMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -728,12 +846,14 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs, wf, logs, revs] = await Promise.all([
+        const [rec, fileRecs, wf, logs, revs, signs, footAnalysis] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
           fetchWorkflowByUploadId(id),
           fetchCommunicationLogsByUploadId(id),
           fetchUploadRevisions(id),
+          fetchAnalysisSigns(),
+          fetchFootAnalysisByUploadId(id),
         ]);
         if (!cancelled) {
           setUpload(rec);
@@ -743,6 +863,8 @@ export default function CustomerDetail() {
           setTrackingInput(wf?.tracking_number ?? '');
           setCommLogs(logs);
           setRevisions(revs);
+          setAnalysisSigns(signs);
+          setAnalysis(footAnalysis);
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -808,6 +930,28 @@ export default function CustomerDetail() {
       // 失敗時は一覧を変更せず据え置く
     } finally {
       setResendingId(null);
+    }
+  }
+
+  async function handleSendAnalysisEmail() {
+    if (!id || !analysisEmailInput.trim()) return;
+    setSendingAnalysisEmail(true);
+    setAnalysisEmailSentMsg(null);
+    try {
+      const created = await sendAnalysisResultNotification({
+        orderId: upload?.order_id ?? null,
+        uploadId: id,
+        customerId: upload?.user_id ?? null,
+        toEmail: analysisEmailInput.trim(),
+        isCustomEmail: true,
+        editorUserId: memberId,
+      });
+      setCommLogs((prev) => [created, ...prev]);
+      setAnalysisEmailSentMsg(`${analysisEmailInput.trim()} 宛に送信キューへ登録しました。`);
+    } catch (e) {
+      setAnalysisEmailSentMsg('送信キューへの登録に失敗しました。');
+    } finally {
+      setSendingAnalysisEmail(false);
     }
   }
 
@@ -1106,6 +1250,18 @@ export default function CustomerDetail() {
 
         {/* ── 変更履歴(データ改訂ログ) ── */}
         <RevisionHistorySection revisions={revisions} />
+
+        {/* ── 動作分析結果(通信履歴の直上、本人指定) ── */}
+        <AnalysisResultSection
+          analysis={analysis}
+          signs={analysisSigns}
+          onEdit={() => setLocation(`/customer/${id}/analysis`)}
+          emailInput={analysisEmailInput}
+          onEmailInputChange={setAnalysisEmailInput}
+          onSend={handleSendAnalysisEmail}
+          sending={sendingAnalysisEmail}
+          sentMsg={analysisEmailSentMsg}
+        />
 
         {/* ── 通信履歴(メール・LINE)・再送(画面最下部、本人指定) ── */}
         <CommunicationLogSection logs={commLogs} resendingId={resendingId} onResend={handleResend} />

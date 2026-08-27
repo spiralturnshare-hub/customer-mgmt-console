@@ -672,6 +672,46 @@ export async function resendCommunicationLog(
   return data as CommunicationLog;
 }
 
+/**
+ * 通知メールの送信元アドレス(Phase 2の実送信処理実装時に使用する固定値)。
+ * 2026-08-26 本人指定: noreply@insoleorder.jp
+ */
+export const NOTIFICATION_SENDER_EMAIL = 'noreply@insoleorder.jp';
+
+/**
+ * 動作分析結果メールを送信キューに登録する(再送・任意メール宛の新規送信の両方に対応)。
+ * 注意: resendCommunicationLogと同様、現時点ではキュー登録のみ。実送信はフェーズ2で実装する。
+ */
+export async function sendAnalysisResultNotification(params: {
+  orderId: string | null;
+  uploadId: string;
+  customerId: string | null;
+  toEmail: string;
+  isCustomEmail: boolean;
+  editorUserId: string | null;
+}): Promise<CommunicationLog> {
+  const { data, error } = await supabase
+    .from('production_notifications')
+    .insert({
+      order_id: params.orderId,
+      upload_id: params.uploadId,
+      customer_id: params.customerId,
+      notify_type: '分析結果',
+      notify_kind: 'email',
+      notify_to: params.toEmail,
+      is_sent: false,
+      status: 'pending',
+      is_custom_email: params.isCustomEmail,
+      is_favorited: false,
+      editor_user_id: params.editorUserId,
+      resend_of_id: null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as CommunicationLog;
+}
+
 /** 分析完了として確定する(完了フラグ+完了日時+担当者を記録) */
 export async function completeFootAnalysis(
   footAnalysisId: string,

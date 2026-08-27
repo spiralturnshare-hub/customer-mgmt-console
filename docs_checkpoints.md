@@ -63,4 +63,10 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - コミット: `4bc876a`
 - 内容: 工程進捗バーの「計測」ステップに、別デプロイのfoot-measureアプリ(`https://foot-measure.vercel.app/measure?uploadId=...&orderId=...`)を新しいタブで開くボタンを追加(動作分析の`analy`ボタンと同じ`WorkflowStepAction`パターン)。foot-measure側は計測完了時に`production_workflows.measure_done`等を更新するため、その結果が本画面の工程進捗バーにそのまま反映される(追加の表示コード不要)。
 
+### CP10 (2026-08-27 動作分析結果の顧客詳細トップ画面への統合・メール再送)
+- コミット: (このコミット後に追記)
+- 内容: 別ページ(GaitAnalysis.tsx)への遷移が不便という指摘を受け、動作分析結果のサマリー(検出サイン一覧・完了ステータス)と「修正する」ボタンを顧客詳細トップ画面、通信履歴セクションの直上に表示するよう追加(`AnalysisResultSection`)。詳細な編集自体は引き続き別ページで行う。
+  - `sendAnalysisResultNotification`関数を追加し、分析結果メールを任意の宛先(画面入力)へ送信キュー登録できるようにした。送信元アドレスは`noreply@insoleorder.jp`を予定(本人指定、`NOTIFICATION_SENDER_EMAIL`定数としてコード内に記録)。
+  - **重要な制約**: 今回はPhase 1(送信キューへの登録のみ)。実際のメール送信処理(Phase 2)は未実装であり、別途構築が必要。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
