@@ -69,4 +69,13 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - `sendAnalysisResultNotification`関数を追加し、分析結果メールを任意の宛先(画面入力)へ送信キュー登録できるようにした。送信元アドレスは`noreply@insoleorder.jp`を予定(本人指定、`NOTIFICATION_SENDER_EMAIL`定数としてコード内に記録)。
   - **重要な制約**: 今回はPhase 1(送信キューへの登録のみ)。実際のメール送信処理(Phase 2)は未実装であり、別途構築が必要。
 
+### CP11 (2026-08-27 足の計測結果の統合・測り直し・計測/分析の改訂履歴)
+- コミット: (このコミット後に追記)
+- **前提**: `supabase_migrations/004_measurement_and_analysis_revision_history.sql`を本人が事前にSupabase SQL Editorで実行済みであること(`foot_measurement_revisions`/`foot_analysis_revisions`テーブルと`update_foot_measurement_with_history`/`update_foot_analysis_with_history`RPCを追加するマイグレーション)。
+- 内容:
+  - 顧客詳細トップ画面、動作分析結果の直上に「足の計測結果」セクションを追加(Lt/Rt別のLength/Width/Heel to MP/1st IP/LEBをmm表示)。「測り直す」ボタンでfoot-measureアプリを`?readjust=<foot_measurements.id>&uploadId=...&orderId=...`付きで新しいタブに開き、既存の計測データを読み込んだ状態で再調整できる。
+  - `saveDetectedSigns`/`completeFootAnalysis`を、直接updateから改訂履歴RPC(`update_foot_analysis_with_history`)経由に変更。foot-measure側の`calculateAndSaveMeasurement`も同様にRPC化済み(別コミット、foot-measureリポジトリ)。
+  - `RevisionHistorySection`をuploadRevisions専用から汎用化(`title` propを追加)し、「計測データの変更履歴」「動作分析データの変更履歴」としても再利用。
+  - **既知のスコープ縮小**: 計測結果の表示は、foot-measure側の「足の図」グラフィック(足型+座標付き数値)ではなく、動作分析結果と同じシンプルな数値グリッド表示。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app

@@ -507,6 +507,95 @@ export async function toggleShipped(
 }
 
 // ============================================================
+// foot_measurements - 足の計測結果
+// 2026-08-27: 顧客詳細トップ画面に計測結果サマリー・測り直しボタン・
+// 変更履歴を表示するために追加。改訂履歴はfoot_measurement_revisions
+// (upload_revisionsと同じ「上書き禁止・スナップショット保存」方式)。
+// ============================================================
+export interface FootMeasurementRow {
+  id: string;
+  upload_id: string | null;
+  order_id: string | null;
+  status: string;
+  measured_at: string | null;
+  left_foot_length: number | null;
+  right_foot_length: number | null;
+  left_foot_width: number | null;
+  right_foot_width: number | null;
+  left_heel_to_mp: number | null;
+  right_heel_to_mp: number | null;
+  left_first_ip: number | null;
+  right_first_ip: number | null;
+  left_leb: number | null;
+  right_leb: number | null;
+  insole_size: string | null;
+  shoe_size: string | null;
+  shoe_brand: string | null;
+}
+
+/** upload_idに紐づく計測結果を取得(無ければnull) */
+export async function fetchMeasurementByUploadId(uploadId: string): Promise<FootMeasurementRow | null> {
+  const { data, error } = await supabase
+    .from('foot_measurements')
+    .select(
+      'id, upload_id, order_id, status, measured_at, left_foot_length, right_foot_length, left_foot_width, right_foot_width, left_heel_to_mp, right_heel_to_mp, left_first_ip, right_first_ip, left_leb, right_leb, insole_size, shoe_size, shoe_brand'
+    )
+    .eq('upload_id', uploadId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as FootMeasurementRow | null;
+}
+
+// ============================================================
+// foot_measurement_revisions / foot_analysis_revisions - 計測・分析の改訂履歴
+// upload_revisionsと同じパターン。保存だけでなく、customer-mgmt-consoleの
+// UIから即座に閲覧できることが必須方針(docs/10-...md 2026-08-27追記参照)。
+// ============================================================
+export interface MeasurementRevision {
+  id: string;
+  foot_measurement_id: string;
+  revision_number: number;
+  snapshot: Record<string, unknown>;
+  changed_by_type: 'customer' | 'staff';
+  changed_by_id: string | null;
+  change_reason: string | null;
+  created_at: string;
+}
+
+/** 指定計測の変更履歴を新しい順に取得 */
+export async function fetchMeasurementRevisions(measurementId: string): Promise<MeasurementRevision[]> {
+  const { data, error } = await supabase
+    .from('foot_measurement_revisions')
+    .select('*')
+    .eq('foot_measurement_id', measurementId)
+    .order('revision_number', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as MeasurementRevision[];
+}
+
+export interface AnalysisRevision {
+  id: string;
+  foot_analysis_id: string;
+  revision_number: number;
+  snapshot: Record<string, unknown>;
+  changed_by_type: 'customer' | 'staff';
+  changed_by_id: string | null;
+  change_reason: string | null;
+  created_at: string;
+}
+
+/** 指定動作分析の変更履歴を新しい順に取得 */
+export async function fetchAnalysisRevisions(analysisId: string): Promise<AnalysisRevision[]> {
+  const { data, error } = await supabase
+    .from('foot_analysis_revisions')
+    .select('*')
+    .eq('foot_analysis_id', analysisId)
+    .order('revision_number', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as AnalysisRevision[];
+}
+
+// ============================================================
 // analysis_signs / foot_analyses - 動作分析
 // ============================================================
 export type SignSide = 'left' | 'right' | 'both';
@@ -577,23 +666,35 @@ export async function saveDetectedSigns(
   orderId: string | null,
   userId: string | null,
   productionId: string,
-  detectedSigns: string[]
+  detectedSigns: string[],
+  changedById: string | null
 ): Promise<FootAnalysis> {
   const existing = await fetchFootAnalysisByUploadId(uploadId);
-  const patch = { detected_signs: detectedSigns, updated_at: new Date().toISOString() };
   if (existing) {
-    const { data, error } = await supabase
-      .from('foot_analyses')
-      .update(patch)
-      .eq('id', existing.id)
-      .select()
-      .single();
+    // 既存行の更新は改訂履歴RPC経由(呼び出し前のスナップショットをfoot_analysis_revisionsへ保存してから更新)
+    const { data, error } = await supabase.rpc('update_foot_analysis_with_history', {
+      p_analysis_id: existing.id,
+      p_detected_signs: detectedSigns,
+      p_mark_completed: false,
+      p_operator_member_id: null,
+      p_changed_by_type: 'staff',
+      p_changed_by_id: changedById,
+      p_change_reason: '検出サインの下書き保存',
+    });
     if (error) throw error;
     return data as FootAnalysis;
   }
+  // 新規作成はスナップショットする対象が無いため、そのままinsertでよい
   const { data, error } = await supabase
     .from('foot_analyses')
-    .insert({ upload_id: uploadId, order_id: orderId, user_id: userId, production_id: productionId, ...patch })
+    .insert({
+      upload_id: uploadId,
+      order_id: orderId,
+      user_id: userId,
+      production_id: productionId,
+      detected_signs: detectedSigns,
+      updated_at: new Date().toISOString(),
+    })
     .select()
     .single();
   if (error) throw error;
@@ -712,23 +813,23 @@ export async function sendAnalysisResultNotification(params: {
   return data as CommunicationLog;
 }
 
-/** 分析完了として確定する(完了フラグ+完了日時+担当者を記録) */
+/**
+ * 分析完了として確定する(完了フラグ+完了日時+担当者を記録)。
+ * 改訂履歴RPC経由(呼び出し前のスナップショットをfoot_analysis_revisionsへ保存してから更新)。
+ */
 export async function completeFootAnalysis(
   footAnalysisId: string,
   operatorMemberId: string | null
 ): Promise<FootAnalysis> {
-  const { data, error } = await supabase
-    .from('foot_analyses')
-    .update({
-      is_completed: true,
-      completed_at: new Date().toISOString(),
-      analyzed_at: new Date().toISOString(),
-      operator_member_id: operatorMemberId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', footAnalysisId)
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('update_foot_analysis_with_history', {
+    p_analysis_id: footAnalysisId,
+    p_detected_signs: null,
+    p_mark_completed: true,
+    p_operator_member_id: operatorMemberId,
+    p_changed_by_type: 'staff',
+    p_changed_by_id: operatorMemberId,
+    p_change_reason: '動作分析を確定',
+  });
   if (error) throw error;
   return data as FootAnalysis;
 }

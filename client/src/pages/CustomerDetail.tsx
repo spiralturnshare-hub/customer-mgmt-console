@@ -9,7 +9,7 @@
 
 import { ArrowLeft, Copy, RefreshCw, Check, Loader2, Mail, MessageCircle, Send, CheckCircle2, XCircle, Clock, Pencil, X, History, Upload, Truck } from "lucide-react";
 import { useLocation, useParams } from "wouter";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   fetchUploadById,
   fetchUploadFiles,
@@ -28,6 +28,9 @@ import {
   uploadReplacementFileToStorage,
   fetchAnalysisSigns,
   fetchFootAnalysisByUploadId,
+  fetchMeasurementByUploadId,
+  fetchMeasurementRevisions,
+  fetchAnalysisRevisions,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
@@ -37,6 +40,9 @@ import {
   type UploadRevision,
   type AnalysisSign,
   type FootAnalysis,
+  type FootMeasurementRow,
+  type MeasurementRevision,
+  type AnalysisRevision,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -425,6 +431,7 @@ function AnalysisResultSection({
   onSend,
   sending,
   sentMsg,
+  revisions,
 }: {
   analysis: FootAnalysis | null;
   signs: AnalysisSign[];
@@ -434,6 +441,7 @@ function AnalysisResultSection({
   onSend: () => void;
   sending: boolean;
   sentMsg: string | null;
+  revisions: AnalysisRevision[];
 }) {
   const signByKey = new Map(signs.map((s) => [s.key, s]));
   const detected = (analysis?.detected_signs ?? [])
@@ -446,6 +454,7 @@ function AnalysisResultSection({
     .filter((v): v is { title: string; sideLabel: string } => v !== null);
 
   return (
+    <>
     <Card className="mb-4">
       <div className="flex items-center justify-between mb-2">
         <SectionTitle>動作分析結果</SectionTitle>
@@ -514,6 +523,111 @@ function AnalysisResultSection({
         </p>
       </div>
     </Card>
+    <RevisionHistorySection revisions={revisions} title="動作分析データの変更履歴" />
+    </>
+  );
+}
+
+// ─── 足の計測結果(サマリー表示・測り直し) ───────────────────────────────────
+// 2026-08-27: 動作分析結果と同様、別ページ(foot-measure)への遷移が面倒という指摘を受け、
+// 計測結果のサマリー(Lt/Rt: Length/Width/Heel to MP/1st IP/LEB)を顧客詳細トップ画面
+// (動作分析結果の直上)に表示するよう追加。足の図グラフィックの再現はスコープ外とし、
+// 動作分析結果と同じシンプルなラベル:値のグリッド表示にしている。
+const MEASUREMENT_FIELDS: { key: keyof FootMeasurementRow; label: string }[] = [
+  { key: 'left_foot_length', label: 'Length' },
+  { key: 'left_foot_width', label: 'Width' },
+  { key: 'left_heel_to_mp', label: 'Heel to MP' },
+  { key: 'left_first_ip', label: '1st IP' },
+  { key: 'left_leb', label: 'LEB' },
+];
+const RIGHT_KEY_MAP: Record<string, keyof FootMeasurementRow> = {
+  left_foot_length: 'right_foot_length',
+  left_foot_width: 'right_foot_width',
+  left_heel_to_mp: 'right_heel_to_mp',
+  left_first_ip: 'right_first_ip',
+  left_leb: 'right_leb',
+};
+
+function MeasurementResultSection({
+  measurement,
+  footMeasureUrl,
+  uploadId,
+  orderId,
+  revisions,
+}: {
+  measurement: FootMeasurementRow | null;
+  footMeasureUrl: string;
+  uploadId: string;
+  orderId: string | null;
+  revisions: MeasurementRevision[];
+}) {
+  const completed = measurement?.status === 'completed';
+
+  function handleOpenFootMeasure() {
+    const params = new URLSearchParams({ uploadId });
+    if (orderId) params.set('orderId', orderId);
+    if (measurement) params.set('readjust', measurement.id);
+    window.open(`${footMeasureUrl}/measure?${params.toString()}`, '_blank', 'noopener,noreferrer');
+  }
+
+  return (
+    <>
+    <Card className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <SectionTitle>足の計測結果</SectionTitle>
+        {measurement && (
+          <span
+            className="text-[10px] font-bold px-2 py-1 rounded-md"
+            style={{
+              color: completed ? "#1a9e5c" : "#999",
+              backgroundColor: completed ? "#1a9e5c15" : "#f5f5f5",
+            }}
+          >
+            {completed ? "完了" : "未完了"}
+          </span>
+        )}
+      </div>
+      {measurement?.measured_at && (
+        <p className="text-[10px] text-gray-400 mb-3">
+          最終更新: {new Date(measurement.measured_at).toLocaleString('ja-JP')}
+        </p>
+      )}
+      {!measurement ? (
+        <p className="text-xs text-gray-400 mb-3">計測データはまだありません。</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 mb-3">
+          <p className="text-xs font-bold" style={{ color: PINK }}>Lt</p>
+          <p className="text-xs font-bold" style={{ color: PINK }}>Rt</p>
+          {MEASUREMENT_FIELDS.map(({ key, label }) => {
+            const rightKey = RIGHT_KEY_MAP[key];
+            const leftVal = measurement[key] as number | null;
+            const rightVal = measurement[rightKey] as number | null;
+            return (
+              <Fragment key={key}>
+                <div className="flex justify-between text-xs border-b pb-1" style={{ borderColor: "#f0f0f0" }}>
+                  <span className="text-gray-500">{label}</span>
+                  <span className="font-semibold text-gray-700">{leftVal != null ? `${leftVal}mm` : '-'}</span>
+                </div>
+                <div className="flex justify-between text-xs border-b pb-1" style={{ borderColor: "#f0f0f0" }}>
+                  <span className="text-gray-500">{label}</span>
+                  <span className="font-semibold text-gray-700">{rightVal != null ? `${rightVal}mm` : '-'}</span>
+                </div>
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={handleOpenFootMeasure}
+        className="text-xs font-bold px-3 py-2 rounded-lg text-white"
+        style={{ backgroundColor: PINK }}
+      >
+        {measurement ? "測り直す" : "計測を開始する"}
+      </button>
+    </Card>
+    <RevisionHistorySection revisions={revisions} title="計測データの変更履歴" />
+    </>
   );
 }
 
@@ -763,11 +877,29 @@ function JsonEditCard({
 }
 
 // ─── 変更履歴(改訂履歴ポリシー) ────────────────────────────────────────
-function RevisionHistorySection({ revisions }: { revisions: UploadRevision[] }) {
+// upload_revisions/foot_measurement_revisions/foot_analysis_revisionsは全て同じ形の
+// 列(id, revision_number, snapshot, changed_by_type, change_reason, created_at)を持つため、
+// この共通型で1つの表示コンポーネントを使い回す。
+interface RevisionLike {
+  id: string;
+  revision_number: number;
+  snapshot: Record<string, unknown>;
+  changed_by_type: 'customer' | 'staff';
+  change_reason: string | null;
+  created_at: string;
+}
+
+function RevisionHistorySection({
+  revisions,
+  title = "変更履歴(データ改訂ログ)",
+}: {
+  revisions: RevisionLike[];
+  title?: string;
+}) {
   const [openId, setOpenId] = useState<string | null>(null);
   return (
     <Card className="mt-4">
-      <SectionTitle>変更履歴(データ改訂ログ)</SectionTitle>
+      <SectionTitle>{title}</SectionTitle>
       {revisions.length === 0 ? (
         <p className="text-xs text-gray-400">変更履歴はまだありません。</p>
       ) : (
@@ -838,6 +970,10 @@ export default function CustomerDetail() {
   const [analysisEmailInput, setAnalysisEmailInput] = useState('');
   const [sendingAnalysisEmail, setSendingAnalysisEmail] = useState(false);
   const [analysisEmailSentMsg, setAnalysisEmailSentMsg] = useState<string | null>(null);
+  const [analysisRevisions, setAnalysisRevisions] = useState<AnalysisRevision[]>([]);
+
+  const [measurement, setMeasurement] = useState<FootMeasurementRow | null>(null);
+  const [measurementRevisions, setMeasurementRevisions] = useState<MeasurementRevision[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -846,7 +982,7 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs, wf, logs, revs, signs, footAnalysis] = await Promise.all([
+        const [rec, fileRecs, wf, logs, revs, signs, footAnalysis, footMeasurement] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
           fetchWorkflowByUploadId(id),
@@ -854,6 +990,11 @@ export default function CustomerDetail() {
           fetchUploadRevisions(id),
           fetchAnalysisSigns(),
           fetchFootAnalysisByUploadId(id),
+          fetchMeasurementByUploadId(id),
+        ]);
+        const [analysisRevs, measurementRevs] = await Promise.all([
+          footAnalysis ? fetchAnalysisRevisions(footAnalysis.id) : Promise.resolve([]),
+          footMeasurement ? fetchMeasurementRevisions(footMeasurement.id) : Promise.resolve([]),
         ]);
         if (!cancelled) {
           setUpload(rec);
@@ -865,6 +1006,9 @@ export default function CustomerDetail() {
           setRevisions(revs);
           setAnalysisSigns(signs);
           setAnalysis(footAnalysis);
+          setAnalysisRevisions(analysisRevs);
+          setMeasurement(footMeasurement);
+          setMeasurementRevisions(measurementRevs);
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -1252,6 +1396,14 @@ export default function CustomerDetail() {
         <RevisionHistorySection revisions={revisions} />
 
         {/* ── 動作分析結果(通信履歴の直上、本人指定) ── */}
+        <MeasurementResultSection
+          measurement={measurement}
+          footMeasureUrl={FOOT_MEASURE_URL}
+          uploadId={id ?? ''}
+          orderId={upload?.order_id ?? null}
+          revisions={measurementRevisions}
+        />
+
         <AnalysisResultSection
           analysis={analysis}
           signs={analysisSigns}
@@ -1261,6 +1413,7 @@ export default function CustomerDetail() {
           onSend={handleSendAnalysisEmail}
           sending={sendingAnalysisEmail}
           sentMsg={analysisEmailSentMsg}
+          revisions={analysisRevisions}
         />
 
         {/* ── 通信履歴(メール・LINE)・再送(画面最下部、本人指定) ── */}

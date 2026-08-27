@@ -179,7 +179,7 @@ export default function GaitAnalysis() {
       const detected = Object.entries(next)
         .filter(([, side]) => side)
         .map(([key, side]) => signValue(key, side as Side));
-      const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected);
+      const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected, memberId);
       setFootAnalysisId(result.id);
       if (markCompleted) {
         await completeFootAnalysis(result.id, memberId);
