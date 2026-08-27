@@ -9,6 +9,7 @@ import CustomerDetail from "./pages/CustomerDetail";
 import GaitAnalysis from "./pages/GaitAnalysis";
 import ShipmentSessionList from "./pages/ShipmentSessionList";
 import ShipmentBatchDetail from "./pages/ShipmentBatchDetail";
+import PermissionManagement from "./pages/PermissionManagement";
 import SignIn from "./pages/SignIn";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 
@@ -44,6 +45,9 @@ function Router() {
       </Route>
       <Route path={"/shipments/:id"}>
         <AuthGuard><ShipmentBatchDetail /></AuthGuard>
+      </Route>
+      <Route path={"/members"}>
+        <AuthGuard><PermissionManagement /></AuthGuard>
       </Route>
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

@@ -12,7 +12,7 @@
  *   使う想定のため、普通のテキスト入力欄のままで対応できる(追加実装不要)。
  */
 import { useState, useEffect, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2, Truck } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2, Truck, ShieldCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -25,6 +25,7 @@ import {
   toggleWorkflowStep,
   saveTrackingNumber,
   fetchCurrentMember,
+  fetchCurrentMemberFull,
   type UploadRecord,
   type ProductionWorkflow,
   type WorkflowStep,
@@ -315,6 +316,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
 
   const [pendingKey, setPendingKey] = useState<string | null>(null); // `${uploadId}:${step}`
   const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
@@ -352,6 +354,9 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
     fetchCurrentMember(user.id).then((m) => setMemberId(m?.id ?? null));
+    // 権限管理(/members)への導線を出すかどうかの判定にはperm_*列を含むフル版が必要なため、
+    // 簡易版のfetchCurrentMemberとは別に呼ぶ。
+    fetchCurrentMemberFull(user.id).then((m) => setIsOwner(m?.role === 'owner'));
   }, [user]);
 
   async function handleToggle(uploadId: string, step: WorkflowStep, nextDone: boolean) {
@@ -410,6 +415,17 @@ export default function Home() {
               <Truck size={13} strokeWidth={2} />
               配送管理
             </button>
+            {isOwner && (
+              <button
+                type="button"
+                onClick={() => setLocation('/members')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95"
+                style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+              >
+                <ShieldCheck size={13} strokeWidth={2} />
+                権限管理
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="relative">

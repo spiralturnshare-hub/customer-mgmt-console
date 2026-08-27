@@ -318,6 +318,188 @@ export async function fetchMemberNameById(memberId: string | null): Promise<stri
 }
 
 // ============================================================
+// system_members - 権限管理
+// 2026-08-27: 誰がどのデータを見られるかをcustomer-mgmt-console上で
+// 管理できるようにするため新設。オーナーは常に1名まで
+// (supabase_migrations/006_permission_management.sqlのユニークインデックスが
+// 最終的な安全網。フロント側のチェックはあくまで二重の安全策の片方)。
+//
+// 【重要】これはUI層の表示制御であり、Supabase RLS(Row Level Security)
+// による真のアクセス制御ではない。Green段階はanon keyで緩やかにアクセス
+// 可能という現状の設計方針を踏襲している(本人への正直な開示のためコメント記載)。
+// ============================================================
+export type PermLevel = 'none' | 'view' | 'edit';
+
+/** 顧客詳細画面で出し分け対象になる「枠」のキー一覧 */
+export type CustomerSectionKey =
+  | 'order_info'
+  | 'customer_info'
+  | 'purpose_info'
+  | 'address_info'
+  | 'shoe_info'
+  | 'pain_info'
+  | 'tako_info'
+  | 'files'
+  | 'upload_meta_info'
+  | 'revision_history'
+  | 'communication_log';
+
+/** 選択UI表示用: セクションキーと日本語ラベルの対応 */
+export const CUSTOMER_SECTION_LABELS: Record<CustomerSectionKey, string> = {
+  order_info: '注文・アップロード情報',
+  customer_info: '顧客情報',
+  purpose_info: '作製目的',
+  address_info: '配送先情報',
+  shoe_info: '靴情報',
+  pain_info: '痛み',
+  tako_info: 'タコ・魚の目',
+  files: 'ファイル',
+  upload_meta_info: 'アップロード情報',
+  revision_history: '変更履歴',
+  communication_log: '通信履歴',
+};
+
+export interface SystemMember {
+  id: string;
+  email: string | null;
+  name: string;
+  role: string | null;
+  status: string | null;
+  invited_at: string | null;
+  joined_at: string | null;
+  last_login_at: string | null;
+  invited_by: string | null;
+  auth_user_id: string | null;
+  organization_id: string | null;
+  perm_analysis: PermLevel;
+  perm_measurement: PermLevel;
+  perm_production: PermLevel;
+  perm_shipping: PermLevel;
+  perm_customer: PermLevel;
+  perm_organization: PermLevel;
+  perm_member: PermLevel;
+  is_outsourced: boolean | null;
+  visible_customer_sections: string[];
+}
+
+/**
+ * ログイン中の担当者情報を、権限列を含めてフル取得する。
+ * fetchCurrentMember(id, nameのみの簡易版)は既存の保存処理で使われているため
+ * そのまま残し、権限判定にはこちらを新設して使う。
+ */
+export async function fetchCurrentMemberFull(authUserId: string): Promise<SystemMember | null> {
+  const { data, error } = await supabase
+    .from('system_members')
+    .select('*')
+    .eq('auth_user_id', authUserId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as SystemMember;
+}
+
+/** 権限管理画面用: 全メンバー一覧を取得(名前順) */
+export async function fetchAllMembers(): Promise<SystemMember[]> {
+  const { data, error } = await supabase
+    .from('system_members')
+    .select('*')
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as SystemMember[];
+}
+
+/**
+ * メンバーの権限を更新する(直接update)。
+ * このテーブルへの直接updateは権限管理機能に限って許容している
+ * (改訂履歴の仕組みは今回対象外、本人からその指示なし)。
+ * role='owner'への変更は、呼び出し元(PermissionManagement.tsx)で
+ * フロント側の一意性チェックを行った上で呼ぶこと。最終的な安全網は
+ * DB側のユニークインデックス(system_members_single_owner)。
+ */
+export async function updateMemberPermissions(
+  memberId: string,
+  patch: Partial<
+    Pick<
+      SystemMember,
+      | 'role'
+      | 'perm_analysis'
+      | 'perm_measurement'
+      | 'perm_production'
+      | 'perm_shipping'
+      | 'perm_customer'
+      | 'perm_organization'
+      | 'perm_member'
+      | 'visible_customer_sections'
+    >
+  >
+): Promise<SystemMember> {
+  const { data, error } = await supabase
+    .from('system_members')
+    .update(patch)
+    .eq('id', memberId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as SystemMember;
+}
+
+/**
+ * 新規スタッフをメンバーとして追加する。
+ * auth_user_id(認証アカウントとの紐付け)は空のままとし、本人が別途、
+ * そのスタッフが実際にサインインした際に紐付けを行う運用とする。
+ * 認証招待メール送信等は今回実装しない。
+ */
+export async function createMember(name: string, email: string): Promise<SystemMember> {
+  const { data, error } = await supabase
+    .from('system_members')
+    .insert({
+      name,
+      email,
+      role: 'member',
+      status: 'invited',
+      invited_at: new Date().toISOString(),
+      perm_analysis: 'none',
+      perm_measurement: 'none',
+      perm_production: 'none',
+      perm_shipping: 'none',
+      perm_customer: 'none',
+      perm_organization: 'none',
+      perm_member: 'none',
+      is_outsourced: false,
+      visible_customer_sections: [],
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as SystemMember;
+}
+
+/**
+ * 顧客詳細画面の特定の「枠」をこのメンバーに見せてよいか判定する。
+ * オーナーは常に全て閲覧可(判定をバイパス)。
+ * perm_customerが'none'、またはmemberがnull(未登録メンバー)の場合は不可。
+ * それ以外はvisible_customer_sectionsに該当キーが含まれるかで判定する。
+ */
+export function canViewCustomerSection(member: SystemMember | null, sectionKey: string): boolean {
+  if (member?.role === 'owner') return true;
+  if (!member) return false;
+  if (member.perm_customer === 'none') return false;
+  return member.visible_customer_sections.includes(sectionKey);
+}
+
+/**
+ * 機能ドメイン(分析/計測/作製/配送)をこのメンバーに見せてよいか判定する。
+ * オーナーは常に全て閲覧可。それ以外は該当permが'none'でなければ可。
+ */
+export function canViewDomain(
+  member: SystemMember | null,
+  permKey: 'perm_analysis' | 'perm_measurement' | 'perm_production' | 'perm_shipping'
+): boolean {
+  if (member?.role === 'owner') return true;
+  if (!member) return false;
+  return member[permKey] !== 'none';
+}
+
+// ============================================================
 // production_workflows - 工程進捗(計測/分析/設計/作製/発送)
 // ============================================================
 export type WorkflowStep = 'measure' | 'analy' | 'design' | 'produce' | 'ship';

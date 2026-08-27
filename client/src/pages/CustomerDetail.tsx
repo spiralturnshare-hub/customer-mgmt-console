@@ -31,6 +31,9 @@ import {
   fetchMeasurementByUploadId,
   fetchMeasurementRevisions,
   fetchAnalysisRevisions,
+  fetchCurrentMemberFull,
+  canViewCustomerSection,
+  canViewDomain,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
@@ -43,6 +46,7 @@ import {
   type FootMeasurementRow,
   type MeasurementRevision,
   type AnalysisRevision,
+  type SystemMember,
 } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -975,6 +979,10 @@ export default function CustomerDetail() {
   const [measurement, setMeasurement] = useState<FootMeasurementRow | null>(null);
   const [measurementRevisions, setMeasurementRevisions] = useState<MeasurementRevision[]>([]);
 
+  // 権限管理(2026-08-27新設): 表示制御用にログイン中メンバーの権限情報をフル取得する。
+  // 既存のmemberId(保存処理で使用)とは別のstateとして保持する。
+  const [currentMember, setCurrentMember] = useState<SystemMember | null>(null);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -982,7 +990,7 @@ export default function CustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [rec, fileRecs, wf, logs, revs, signs, footAnalysis, footMeasurement] = await Promise.all([
+        const [rec, fileRecs, wf, logs, revs, signs, footAnalysis, footMeasurement, member] = await Promise.all([
           fetchUploadById(id),
           fetchUploadFiles(id),
           fetchWorkflowByUploadId(id),
@@ -991,6 +999,7 @@ export default function CustomerDetail() {
           fetchAnalysisSigns(),
           fetchFootAnalysisByUploadId(id),
           fetchMeasurementByUploadId(id),
+          user ? fetchCurrentMemberFull(user.id) : Promise.resolve(null),
         ]);
         const [analysisRevs, measurementRevs] = await Promise.all([
           footAnalysis ? fetchAnalysisRevisions(footAnalysis.id) : Promise.resolve([]),
@@ -1009,6 +1018,7 @@ export default function CustomerDetail() {
           setAnalysisRevisions(analysisRevs);
           setMeasurement(footMeasurement);
           setMeasurementRevisions(measurementRevs);
+          setCurrentMember(member);
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -1017,7 +1027,7 @@ export default function CustomerDetail() {
       }
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -1188,9 +1198,11 @@ export default function CustomerDetail() {
         <div className="mb-1">
           <p className="text-xs text-gray-400 mb-0.5">{createdAt}</p>
           <h1 className="text-xl font-bold mb-2" style={{ color: "#1a1a1a" }}>
-            {upload.insole_user_name ?? '（名前未設定）'}
+            {canViewCustomerSection(currentMember, 'customer_info')
+              ? (upload.insole_user_name ?? '（名前未設定）')
+              : (upload.order_name ?? upload.id)}
           </h1>
-          {upload.insole_user_kana && (
+          {canViewCustomerSection(currentMember, 'customer_info') && upload.insole_user_kana && (
             <p className="text-sm text-gray-400 mb-2">{upload.insole_user_kana}</p>
           )}
           {/* インソール種別タグ */}
@@ -1211,58 +1223,66 @@ export default function CustomerDetail() {
 
         {/* ── 工程進捗（計測/分析/設計/作製/発送） ── */}
         {/* 各カードにその工程の機能ボタンを内包する設計(2026-08-25確定)。
-            計測・設計・発送のボタンは対応機能の実装時に追加する。 */}
-        <WorkflowProgressBar
-          steps={stepDisplays}
-          pendingStep={pendingStep}
-          onToggle={handleToggleStep}
-          actions={{
-            measure: {
-              label: workflow?.measure_done ? '計測を確認する' : '計測を開始する',
-              onClick: () => {
-                if (!id) return;
-                const params = new URLSearchParams({ uploadId: id });
-                if (upload?.order_id) params.set('orderId', upload.order_id);
-                window.open(`${FOOT_MEASURE_URL}/measure?${params.toString()}`, '_blank', 'noopener,noreferrer');
+            計測・設計・発送のボタンは対応機能の実装時に追加する。
+            2026-08-27: perm_productionが'none'のメンバーにはこのセクション自体を非表示にする
+            (計測/分析/配送の担当者用に個々のボタンを出し分けるところまでは今回のスコープ外)。 */}
+        {canViewDomain(currentMember, 'perm_production') && (
+          <WorkflowProgressBar
+            steps={stepDisplays}
+            pendingStep={pendingStep}
+            onToggle={handleToggleStep}
+            actions={{
+              measure: {
+                label: workflow?.measure_done ? '計測を確認する' : '計測を開始する',
+                onClick: () => {
+                  if (!id) return;
+                  const params = new URLSearchParams({ uploadId: id });
+                  if (upload?.order_id) params.set('orderId', upload.order_id);
+                  window.open(`${FOOT_MEASURE_URL}/measure?${params.toString()}`, '_blank', 'noopener,noreferrer');
+                },
               },
-            },
-            analy: { label: '動作分析を開く', onClick: () => setLocation(`/customer/${id}/analysis`) },
-          }}
-        />
+              analy: { label: '動作分析を開く', onClick: () => setLocation(`/customer/${id}/analysis`) },
+            }}
+          />
+        )}
 
-        <ShippingSection
-          workflow={workflow}
-          trackingInput={trackingInput}
-          onTrackingInputChange={setTrackingInput}
-          onSaveTracking={handleSaveTracking}
-          savingTracking={savingTracking}
-          onToggleShipped={handleToggleShipped}
-          togglingShip={togglingShip}
-        />
+        {canViewDomain(currentMember, 'perm_shipping') && (
+          <ShippingSection
+            workflow={workflow}
+            trackingInput={trackingInput}
+            onTrackingInputChange={setTrackingInput}
+            onSaveTracking={handleSaveTracking}
+            savingTracking={savingTracking}
+            onToggleShipped={handleToggleShipped}
+            togglingShip={togglingShip}
+          />
+        )}
 
         {/* ── 注文情報ブロック（横幅全体） ── */}
-        <Card className="mb-4">
-          <SectionTitle>注文・アップロード情報</SectionTitle>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>注文情報</p>
-              <InfoRow label="アップロードID" value={upload.id} />
-              <InfoRow label="注文ID" value={upload.order_id} />
-              <InfoRow label="注文コード" value={upload.order_name} />
-              <InfoRow label="ゲストアップロード" value={upload.guest_tf ? 'true' : 'false'} />
-              <InfoRow label="前回デザイン" value={upload.previous_design_tf ? 'true' : 'false'} />
-              <InfoRow label="ステータス" value={upload.status} />
-              <InfoRow label="作成日時" value={createdAt} />
-              <InfoRow label="更新日時" value={updatedAt} />
+        {canViewCustomerSection(currentMember, 'order_info') && (
+          <Card className="mb-4">
+            <SectionTitle>注文・アップロード情報</SectionTitle>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>注文情報</p>
+                <InfoRow label="アップロードID" value={upload.id} />
+                <InfoRow label="注文ID" value={upload.order_id} />
+                <InfoRow label="注文コード" value={upload.order_name} />
+                <InfoRow label="ゲストアップロード" value={upload.guest_tf ? 'true' : 'false'} />
+                <InfoRow label="前回デザイン" value={upload.previous_design_tf ? 'true' : 'false'} />
+                <InfoRow label="ステータス" value={upload.status} />
+                <InfoRow label="作成日時" value={createdAt} />
+                <InfoRow label="更新日時" value={updatedAt} />
+              </div>
+              <div>
+                <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>組織情報</p>
+                <InfoRow label="組織ID" value={upload.organization_id} />
+                <InfoRow label="ユーザーID" value={upload.user_id} />
+                <InfoRow label="ルームカラー" value={upload.room_color} />
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>組織情報</p>
-              <InfoRow label="組織ID" value={upload.organization_id} />
-              <InfoRow label="ユーザーID" value={upload.user_id} />
-              <InfoRow label="ルームカラー" value={upload.room_color} />
-            </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
         {/* ── 3カラムレイアウト ── */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr_1fr] gap-4">
@@ -1270,154 +1290,178 @@ export default function CustomerDetail() {
           {/* ════ 左カラム ════ */}
           <div>
             {/* 顧客情報(編集可・改訂履歴あり) */}
-            <EditableInfoCard
-              title="顧客情報"
-              fields={[
-                { key: 'insole_user_name', label: 'インソール利用者名', value: upload.insole_user_name ?? '' },
-                { key: 'insole_user_kana', label: 'ふりがな', value: upload.insole_user_kana ?? '' },
-                { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
-              ]}
-              onSave={(v) =>
-                handleSaveUploadPatch(
-                  {
-                    insole_user_name: v.insole_user_name,
-                    insole_user_kana: v.insole_user_kana,
-                    customer_info: { ...(customerInfo ?? {}), phone: v.phone },
-                  },
-                  '顧客情報を編集'
-                )
-              }
-            />
+            {canViewCustomerSection(currentMember, 'customer_info') && (
+              <EditableInfoCard
+                title="顧客情報"
+                fields={[
+                  { key: 'insole_user_name', label: 'インソール利用者名', value: upload.insole_user_name ?? '' },
+                  { key: 'insole_user_kana', label: 'ふりがな', value: upload.insole_user_kana ?? '' },
+                  { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
+                ]}
+                onSave={(v) =>
+                  handleSaveUploadPatch(
+                    {
+                      insole_user_name: v.insole_user_name,
+                      insole_user_kana: v.insole_user_kana,
+                      customer_info: { ...(customerInfo ?? {}), phone: v.phone },
+                    },
+                    '顧客情報を編集'
+                  )
+                }
+              />
+            )}
 
             {/* 作製目的(編集可・改訂履歴あり) */}
-            <EditableInfoCard
-              title="作製目的"
-              fields={[
-                {
-                  key: 'purposes',
-                  label: '目的',
-                  value: Array.isArray(purposeInfo?.purposes)
-                    ? (purposeInfo!.purposes as string[]).join(', ')
-                    : getStr(purposeInfo, 'purposes'),
-                },
-                { key: 'lifestyle', label: 'ライフスタイル', value: getStr(purposeInfo, 'lifestyle') },
-                { key: 'playstyle', label: 'プレイスタイル', value: getStr(purposeInfo, 'playstyle') },
-                { key: 'otherPurpose', label: 'その他', value: getStr(purposeInfo, 'otherPurpose') },
-              ]}
-              onSave={(v) =>
-                handleSaveUploadPatch(
+            {canViewCustomerSection(currentMember, 'purpose_info') && (
+              <EditableInfoCard
+                title="作製目的"
+                fields={[
                   {
-                    purpose_info: {
-                      ...(purposeInfo ?? {}),
-                      purposes: v.purposes.split(',').map((s) => s.trim()).filter(Boolean),
-                      lifestyle: v.lifestyle,
-                      playstyle: v.playstyle,
-                      otherPurpose: v.otherPurpose,
-                    },
+                    key: 'purposes',
+                    label: '目的',
+                    value: Array.isArray(purposeInfo?.purposes)
+                      ? (purposeInfo!.purposes as string[]).join(', ')
+                      : getStr(purposeInfo, 'purposes'),
                   },
-                  '作製目的を編集'
-                )
-              }
-            />
+                  { key: 'lifestyle', label: 'ライフスタイル', value: getStr(purposeInfo, 'lifestyle') },
+                  { key: 'playstyle', label: 'プレイスタイル', value: getStr(purposeInfo, 'playstyle') },
+                  { key: 'otherPurpose', label: 'その他', value: getStr(purposeInfo, 'otherPurpose') },
+                ]}
+                onSave={(v) =>
+                  handleSaveUploadPatch(
+                    {
+                      purpose_info: {
+                        ...(purposeInfo ?? {}),
+                        purposes: v.purposes.split(',').map((s) => s.trim()).filter(Boolean),
+                        lifestyle: v.lifestyle,
+                        playstyle: v.playstyle,
+                        otherPurpose: v.otherPurpose,
+                      },
+                    },
+                    '作製目的を編集'
+                  )
+                }
+              />
+            )}
 
             {/* 配送先情報(編集可・改訂履歴あり) */}
-            <EditableInfoCard
-              title="配送先情報"
-              fields={[
-                { key: 'userName', label: '氏名', value: getStr(customerInfo, 'userName') },
-                { key: 'userKana', label: 'ふりがな', value: getStr(customerInfo, 'userKana') },
-                { key: 'shipName', label: '配送先名', value: getStr(customerInfo, 'shipName') },
-                { key: 'postalCode', label: '郵便番号', value: getStr(customerInfo, 'postalCode') },
-                { key: 'prefecture', label: '都道府県', value: getStr(customerInfo, 'prefecture') },
-                { key: 'city', label: '市区町村', value: getStr(customerInfo, 'city') },
-                { key: 'address', label: '住所', value: getStr(customerInfo, 'address') },
-                { key: 'building', label: '建物名', value: getStr(customerInfo, 'building') },
-                { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
-              ]}
-              onSave={(v) =>
-                handleSaveUploadPatch(
-                  { customer_info: { ...(customerInfo ?? {}), ...v } },
-                  '配送先情報を編集'
-                )
-              }
-            />
+            {canViewCustomerSection(currentMember, 'address_info') && (
+              <EditableInfoCard
+                title="配送先情報"
+                fields={[
+                  { key: 'userName', label: '氏名', value: getStr(customerInfo, 'userName') },
+                  { key: 'userKana', label: 'ふりがな', value: getStr(customerInfo, 'userKana') },
+                  { key: 'shipName', label: '配送先名', value: getStr(customerInfo, 'shipName') },
+                  { key: 'postalCode', label: '郵便番号', value: getStr(customerInfo, 'postalCode') },
+                  { key: 'prefecture', label: '都道府県', value: getStr(customerInfo, 'prefecture') },
+                  { key: 'city', label: '市区町村', value: getStr(customerInfo, 'city') },
+                  { key: 'address', label: '住所', value: getStr(customerInfo, 'address') },
+                  { key: 'building', label: '建物名', value: getStr(customerInfo, 'building') },
+                  { key: 'phone', label: '電話番号', value: getStr(customerInfo, 'phone') },
+                ]}
+                onSave={(v) =>
+                  handleSaveUploadPatch(
+                    { customer_info: { ...(customerInfo ?? {}), ...v } },
+                    '配送先情報を編集'
+                  )
+                }
+              />
+            )}
           </div>
 
           {/* ════ 中央カラム：ファイル ════ */}
           <div>
-            <Card>
-              <SectionTitle>ファイル</SectionTitle>
-              {files.length === 0 ? (
-                <p className="text-xs text-gray-400">ファイルなし（Storage連携待ち）</p>
-              ) : (
-                files.map((file) => (
-                  <FileCard key={file.id} file={file} onReplace={handleReplaceFile} />
-                ))
-              )}
-            </Card>
+            {canViewCustomerSection(currentMember, 'files') && (
+              <Card>
+                <SectionTitle>ファイル</SectionTitle>
+                {files.length === 0 ? (
+                  <p className="text-xs text-gray-400">ファイルなし（Storage連携待ち）</p>
+                ) : (
+                  files.map((file) => (
+                    <FileCard key={file.id} file={file} onReplace={handleReplaceFile} />
+                  ))
+                )}
+              </Card>
+            )}
           </div>
 
           {/* ════ 右カラム ════ */}
           <div>
             {/* 靴情報(編集可・改訂履歴あり、複雑なネスト構造のため暫定JSON編集) */}
-            <JsonEditCard
-              title="靴情報"
-              value={shoeInfos}
-              onSave={(v) => handleSaveUploadPatch({ shoe_infos: v }, '靴情報を編集')}
-            />
+            {canViewCustomerSection(currentMember, 'shoe_info') && (
+              <JsonEditCard
+                title="靴情報"
+                value={shoeInfos}
+                onSave={(v) => handleSaveUploadPatch({ shoe_infos: v }, '靴情報を編集')}
+              />
+            )}
 
             {/* 痛み(編集可・改訂履歴あり、暫定JSON編集) */}
-            <JsonEditCard
-              title="痛み"
-              value={painInfo}
-              onSave={(v) => handleSaveUploadPatch({ pain_info: v }, '痛みの情報を編集')}
-            />
+            {canViewCustomerSection(currentMember, 'pain_info') && (
+              <JsonEditCard
+                title="痛み"
+                value={painInfo}
+                onSave={(v) => handleSaveUploadPatch({ pain_info: v }, '痛みの情報を編集')}
+              />
+            )}
 
             {/* タコ(編集可・改訂履歴あり、暫定JSON編集) */}
-            <JsonEditCard
-              title="タコ・魚の目"
-              value={takoInfo}
-              onSave={(v) => handleSaveUploadPatch({ tako_info: v }, 'タコ・魚の目の情報を編集')}
-            />
+            {canViewCustomerSection(currentMember, 'tako_info') && (
+              <JsonEditCard
+                title="タコ・魚の目"
+                value={takoInfo}
+                onSave={(v) => handleSaveUploadPatch({ tako_info: v }, 'タコ・魚の目の情報を編集')}
+              />
+            )}
 
             {/* アップロード情報 */}
-            <Card>
-              <SectionTitle>アップロード情報</SectionTitle>
-              <InfoRow label="id" value={upload.id} />
-              <InfoRow label="created_at" value={createdAt} />
-              <InfoRow label="updated_at" value={updatedAt} />
-              <InfoRow label="user_id" value={upload.user_id} />
-              <InfoRow label="organization_id" value={upload.organization_id} />
-            </Card>
+            {canViewCustomerSection(currentMember, 'upload_meta_info') && (
+              <Card>
+                <SectionTitle>アップロード情報</SectionTitle>
+                <InfoRow label="id" value={upload.id} />
+                <InfoRow label="created_at" value={createdAt} />
+                <InfoRow label="updated_at" value={updatedAt} />
+                <InfoRow label="user_id" value={upload.user_id} />
+                <InfoRow label="organization_id" value={upload.organization_id} />
+              </Card>
+            )}
           </div>
         </div>
 
         {/* ── 変更履歴(データ改訂ログ) ── */}
-        <RevisionHistorySection revisions={revisions} />
+        {canViewCustomerSection(currentMember, 'revision_history') && (
+          <RevisionHistorySection revisions={revisions} />
+        )}
 
         {/* ── 動作分析結果(通信履歴の直上、本人指定) ── */}
-        <MeasurementResultSection
-          measurement={measurement}
-          footMeasureUrl={FOOT_MEASURE_URL}
-          uploadId={id ?? ''}
-          orderId={upload?.order_id ?? null}
-          revisions={measurementRevisions}
-        />
+        {canViewDomain(currentMember, 'perm_measurement') && (
+          <MeasurementResultSection
+            measurement={measurement}
+            footMeasureUrl={FOOT_MEASURE_URL}
+            uploadId={id ?? ''}
+            orderId={upload?.order_id ?? null}
+            revisions={measurementRevisions}
+          />
+        )}
 
-        <AnalysisResultSection
-          analysis={analysis}
-          signs={analysisSigns}
-          onEdit={() => setLocation(`/customer/${id}/analysis`)}
-          emailInput={analysisEmailInput}
-          onEmailInputChange={setAnalysisEmailInput}
-          onSend={handleSendAnalysisEmail}
-          sending={sendingAnalysisEmail}
-          sentMsg={analysisEmailSentMsg}
-          revisions={analysisRevisions}
-        />
+        {canViewDomain(currentMember, 'perm_analysis') && (
+          <AnalysisResultSection
+            analysis={analysis}
+            signs={analysisSigns}
+            onEdit={() => setLocation(`/customer/${id}/analysis`)}
+            emailInput={analysisEmailInput}
+            onEmailInputChange={setAnalysisEmailInput}
+            onSend={handleSendAnalysisEmail}
+            sending={sendingAnalysisEmail}
+            sentMsg={analysisEmailSentMsg}
+            revisions={analysisRevisions}
+          />
+        )}
 
         {/* ── 通信履歴(メール・LINE)・再送(画面最下部、本人指定) ── */}
-        <CommunicationLogSection logs={commLogs} resendingId={resendingId} onResend={handleResend} />
+        {canViewCustomerSection(currentMember, 'communication_log') && (
+          <CommunicationLogSection logs={commLogs} resendingId={resendingId} onResend={handleResend} />
+        )}
       </div>
     </div>
   );
