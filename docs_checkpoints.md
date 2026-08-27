@@ -90,7 +90,7 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 内容: 本日は「配送管理(セッション単位の一括発送処理)」機能に着手予定。CP8で単件の配送管理(追跡番号・発送完了)を実装済みだが、今回は`shipment_batches`/`shipment_items`を使った複数顧客一括処理のセッション管理UIを新規実装する。着手前のベースライン。
 
 ### CP14 (2026-08-27 配送管理(セッション単位の一括発送処理) 追加後)
-- コミット: (このコミット自身のハッシュ。`git log --oneline -1`で確認)
+- コミット: `6e14038`
 - **前提**: `supabase_migrations/005_shipment_batch_management.sql`を本人が事前にSupabase SQL Editorで実行済みであること(`shipment_items.is_active`等の列、`add_to_shipment_batch`/`remove_from_shipment_batch` RPCを追加するマイグレーション)。
 - 内容:
   - 新規ページ`ShipmentSessionList.tsx`(`/shipments`): セッション一覧(下書き=カード表示、CSV生成完了=テーブル表示の履歴)。「+ 新しいセッション」で出荷予定日(任意)を指定して作成。
