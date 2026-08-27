@@ -101,4 +101,17 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - `Home.tsx`ヘッダーに「配送管理」への導線ボタンを追加(常設サイドバーは今回スコープ外)。
   - `npm run check`・`npm run build`とも成功を確認済み。
 
+### CP15 (2026-08-27 権限管理機能を新規実装)
+- コミット: `bba94e4`
+- **前提**: `supabase_migrations/006_permission_management.sql`を本人が事前にSupabase SQL Editorで実行済みであること(`system_members.visible_customer_sections`列と、`role='owner'`の行を1件に制限するユニークインデックス`system_members_single_owner`を追加するマイグレーション)。
+- 内容: これまでGlideのスプレッドシート上で行っていた権限管理を、customer-mgmt-console上で行えるようにした。
+  - `supabase.ts`: `SystemMember`型、`fetchCurrentMemberFull`(既存の簡易版`fetchCurrentMember`とは別に権限判定用として新設)、`fetchAllMembers`、`updateMemberPermissions`、`createMember`、判定ヘルパー`canViewCustomerSection`/`canViewDomain`を追加。
+  - 新規ページ`PermissionManagement.tsx`(`/members`): `role==='owner'`のメンバーのみアクセス可能(オーナー以外が開いた場合、他メンバー情報は一切取得・表示しない)。メンバーごとに7ドメイン(分析/計測/作製/配送/顧客情報/組織/メンバー管理)の権限(none/view/edit)と、`perm_customer`がnone以外の場合のみ表示される`visible_customer_sections`(顧客詳細画面のどの「枠」を見せるか、11項目から選択)を編集できる。`role`を'owner'に変更しようとした際、既に別のオーナーがいればフロント側でも一意性チェックで弾く(DB側のユニークインデックスが最終的な安全網、二重の安全策)。「+ 新しいメンバーを追加」で名前・メールのみのメンバーを作成可能(認証アカウントとの紐付け=`auth_user_id`は本人が別途、実際のサインイン時に行う運用。招待メール送信は未実装)。
+  - `Home.tsx`ヘッダーに「権限管理」への導線ボタンを追加(オーナーのみ表示、`fetchCurrentMemberFull`で判定)。
+  - `CustomerDetail.tsx`: メインのデータ取得`useEffect`で`fetchCurrentMemberFull(user.id)`を呼び`currentMember`state(新設、既存の`memberId`とは別)に保持。`perm_production`が'none'なら工程進捗セクション全体を非表示(計測・分析・発送の個々のボタンを出し分けるところまでは今回のスコープ外)、`perm_shipping`/`perm_measurement`/`perm_analysis`が'none'ならそれぞれの対応セクションを非表示。`perm_customer`が'none'の場合、顧客情報系11カード(注文情報/顧客情報/作製目的/配送先/靴情報/痛み/タコ/ファイル/アップロード情報/変更履歴/通信履歴)を全て非表示にし、'view'または'edit'の場合は`visible_customer_sections`に含まれるものだけ表示。顧客情報の権限が無いメンバーには、ページ見出しを顧客名でなく`order_name`(注文ID)またはuploadIdで表示(**重要な設計判断・本人指定**: 同一顧客が複数年で複数回注文するケースがあるため、動作分析等は顧客を横断集約せず必ずupload単位で識別する。これに合わせ、権限を絞ったスタッフの画面には「顧客名」ではなく「注文ID/アップロードID」を出す)。`role==='owner'`はこれら全ての判定をバイパスして常に全表示。
+  - **重要な設計上の注意(コード内コメントに明記)**: この権限チェックはアプリケーション層(Reactコンポーネントの表示条件)のみであり、Supabase RLS(Row Level Security)による真のアクセス制御ではない。Green段階はanon keyで緩やかにアクセス可能という、このプロジェクトの現状の設計方針を踏襲している。
+  - `system_members`テーブルへの直接update(`updateMemberPermissions`/`createMember`)は、この権限管理機能に限って許容(改訂履歴RPCは対象外、本人からその指示なし)。
+  - `npm run check`・`npm run build`とも成功を確認済み。
+  - **スコープ外(意図的に対象外)**: メール招待フロー、RLSの実装、工程進捗バー内の個別ボタンの出し分け、GaitAnalysis.tsx/ShipmentBatchDetail.tsx等の他ページへの権限適用。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
