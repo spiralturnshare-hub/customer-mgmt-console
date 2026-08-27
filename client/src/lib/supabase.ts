@@ -305,6 +305,18 @@ async function fetchMemberNames(memberIds: string[]): Promise<Record<string, str
   return Object.fromEntries(data.map((m: { id: string; name: string }) => [m.id, m.name]));
 }
 
+/** system_members.id(担当者ID)から名前を解決する(fetchCurrentMemberはauth_user_id起点のため別関数として用意) */
+export async function fetchMemberNameById(memberId: string | null): Promise<string | null> {
+  if (!memberId) return null;
+  const { data, error } = await supabase
+    .from('system_members')
+    .select('id, name')
+    .eq('id', memberId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string; name: string }).name;
+}
+
 // ============================================================
 // production_workflows - 工程進捗(計測/分析/設計/作製/発送)
 // ============================================================
@@ -867,4 +879,413 @@ export async function completeFootAnalysis(
   });
   if (error) throw error;
   return data as FootAnalysis;
+}
+
+// ============================================================
+// shipment_batches / shipment_items - 配送管理(セッション単位の一括発送処理)
+// 2026-08-27: Blue(Glideベース)の配送管理画面と同等の機能をGreenへ新規実装。
+// テーブル自体はBlue由来の既存テーブル(これまでGreen UIから未使用)。
+// マイグレーション005で追加したis_active/removed_*列とRPC
+// (add_to_shipment_batch/remove_from_shipment_batch)を使い、
+// 「顧客をセッションから外す・付け替える」操作を物理削除ではなく
+// 無効化+新規追加で表現する(会社のデータ改訂ポリシーに準拠)。
+// このため、shipment_itemsのis_active等はこのRPC経由以外で直接updateしないこと。
+// ============================================================
+export interface ShipmentBatch {
+  id: string;
+  ship_date: string | null;
+  is_shipped: boolean;
+  address_csv_url: string | null;
+  survey_sent_date: string | null;
+  memo: string | null;
+  is_favorited: boolean | null;
+  glide_row_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_editor_member_id: string | null;
+}
+
+export interface ShipmentItem {
+  id: string;
+  shipment_batch_id: string;
+  order_id: string | null;
+  production_workflow_id: string | null;
+  upload_id: string | null;
+  customer_id: string | null;
+  tracking_number: string | null;
+  is_shipped: boolean;
+  survey_sent_date: string | null;
+  memo: string | null;
+  is_favorited: boolean | null;
+  glide_row_id: string | null;
+  created_at: string;
+  updated_at: string;
+  is_active: boolean;
+  removed_at: string | null;
+  removed_by_member_id: string | null;
+  removed_reason: string | null;
+}
+
+/** shipment_itemsに顧客の表示用情報(uploads結合)を足した型 */
+export interface ShipmentItemDisplay extends ShipmentItem {
+  insole_user_name: string | null;
+  insole_user_kana: string | null;
+  order_name: string | null;
+  selected_insoles: string[] | null;
+  upload_updated_at: string | null;
+}
+
+/** 全セッションを新しい順に取得(配送管理トップ画面用) */
+export async function fetchShipmentBatches(): Promise<ShipmentBatch[]> {
+  const { data, error } = await supabase
+    .from('shipment_batches')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ShipmentBatch[];
+}
+
+/**
+ * 複数セッションの「有効な配送記録数」(=リスト内の注文数)を一括取得する
+ * (配送管理トップ画面のカード/テーブル表示用。N+1回避のため一括取得)
+ */
+export async function fetchActiveShipmentItemCounts(batchIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (batchIds.length === 0) return map;
+  const { data, error } = await supabase
+    .from('shipment_items')
+    .select('shipment_batch_id')
+    .eq('is_active', true)
+    .in('shipment_batch_id', batchIds);
+  if (error) throw error;
+  for (const row of (data ?? []) as Array<{ shipment_batch_id: string }>) {
+    map.set(row.shipment_batch_id, (map.get(row.shipment_batch_id) ?? 0) + 1);
+  }
+  return map;
+}
+
+/** 特定のセッションを取得(詳細画面用) */
+export async function fetchShipmentBatchById(id: string): Promise<ShipmentBatch | null> {
+  const { data, error } = await supabase
+    .from('shipment_batches')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as ShipmentBatch | null;
+}
+
+/** 新しいセッション(バッチ)を作成する。出荷予定日は未設定(null)でも可 */
+export async function createShipmentBatch(
+  shipDate: string | null,
+  lastEditorMemberId: string | null
+): Promise<ShipmentBatch> {
+  const { data, error } = await supabase
+    .from('shipment_batches')
+    .insert({
+      ship_date: shipDate,
+      is_shipped: false,
+      last_editor_member_id: lastEditorMemberId,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ShipmentBatch;
+}
+
+/** セッションの出荷予定日を更新する */
+export async function updateShipmentBatchShipDate(
+  id: string,
+  shipDate: string | null,
+  lastEditorMemberId: string | null
+): Promise<ShipmentBatch> {
+  const { data, error } = await supabase
+    .from('shipment_batches')
+    .update({
+      ship_date: shipDate,
+      last_editor_member_id: lastEditorMemberId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ShipmentBatch;
+}
+
+/**
+ * 指定バッチの有効な(is_active=true)配送記録を、顧客表示情報(uploads結合)付きで取得する。
+ * PostgREST側の外部キー埋め込みに依存せず、uploadsを別途一括取得してJS側でマージする
+ * (fetchWorkflowsByUploadIds等、このファイルの他関数と同じ方針)。
+ */
+export async function fetchActiveShipmentItemsByBatchId(batchId: string): Promise<ShipmentItemDisplay[]> {
+  const { data, error } = await supabase
+    .from('shipment_items')
+    .select('*')
+    .eq('shipment_batch_id', batchId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  const items = (data ?? []) as ShipmentItem[];
+
+  const uploadIds = Array.from(new Set(items.map((i) => i.upload_id).filter(Boolean))) as string[];
+  const uploadMap = new Map<string, { insole_user_name: string | null; insole_user_kana: string | null; order_name: string | null; selected_insoles: string[] | null; updated_at: string | null }>();
+  if (uploadIds.length > 0) {
+    const { data: uploads, error: uploadsErr } = await supabase
+      .from('uploads')
+      .select('id, insole_user_name, insole_user_kana, order_name, selected_insoles, updated_at')
+      .in('id', uploadIds);
+    if (uploadsErr) throw uploadsErr;
+    for (const u of (uploads ?? []) as Array<{ id: string; insole_user_name: string | null; insole_user_kana: string | null; order_name: string | null; selected_insoles: string[] | null; updated_at: string | null }>) {
+      uploadMap.set(u.id, u);
+    }
+  }
+
+  return items.map((item) => {
+    const u = item.upload_id ? uploadMap.get(item.upload_id) : undefined;
+    return {
+      ...item,
+      insole_user_name: u?.insole_user_name ?? null,
+      insole_user_kana: u?.insole_user_kana ?? null,
+      order_name: u?.order_name ?? null,
+      selected_insoles: u?.selected_insoles ?? null,
+      upload_updated_at: u?.updated_at ?? null,
+    };
+  });
+}
+
+/** 顧客追加モーダルの候補1件分 */
+export interface ShipmentCandidate {
+  upload_id: string;
+  order_id: string | null;
+  user_id: string | null;
+  order_name: string | null;
+  insole_user_name: string | null;
+  insole_user_kana: string | null;
+  uploaded_at: string;
+}
+
+/**
+ * 顧客追加モーダルの候補検索。
+ * uploads側(利用者名・かな・注文ID)とorders側(氏名・かな・メール・電話・注文ID)の
+ * どちらかにqueryがILIKE部分一致すれば候補に含める。
+ * excludeAlreadyActive=trueの場合、既にshipment_items.is_active=trueな顧客(二重登録)は除外する。
+ */
+export async function searchCandidateUploads(
+  query: string,
+  excludeAlreadyActive: boolean = true
+): Promise<ShipmentCandidate[]> {
+  const q = query.trim();
+  if (!q) return [];
+  // PostgRESTの.or()構文はカンマ/括弧を条件区切りとして解釈するため、
+  // 検索語にこれらが含まれるとフィルタ全体が壊れる。氏名・かな・ID・メール・
+  // 電話番号の検索でこれらの文字が本質的に必要になることは無いため除去する。
+  const sanitized = q.replace(/[,()]/g, '');
+  if (!sanitized) return [];
+  const like = `%${sanitized}%`;
+
+  type CandidateRow = {
+    id: string;
+    order_id: string | null;
+    user_id: string | null;
+    order_name: string | null;
+    insole_user_name: string | null;
+    insole_user_kana: string | null;
+    created_at: string;
+  };
+
+  // 1. uploads側(利用者名・かな・注文ID)で直接一致するもの
+  const { data: uploadsDirect, error: uploadsErr } = await supabase
+    .from('uploads')
+    .select('id, order_id, user_id, order_name, insole_user_name, insole_user_kana, created_at')
+    .or(`insole_user_name.ilike.${like},insole_user_kana.ilike.${like},order_name.ilike.${like}`)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (uploadsErr) throw uploadsErr;
+
+  // 2. orders側(氏名・かな・メール・電話・注文ID)で一致する注文に紐づくuploadsも候補に含める
+  const { data: matchedOrders, error: ordersErr } = await supabase
+    .from('orders')
+    .select('id')
+    .or(
+      `order_name.ilike.${like},customer_last_name.ilike.${like},customer_first_name.ilike.${like},customer_last_name_kana.ilike.${like},customer_first_name_kana.ilike.${like},customer_email.ilike.${like},customer_phone.ilike.${like}`
+    )
+    .limit(50);
+  if (ordersErr) throw ordersErr;
+
+  let uploadsFromOrders: CandidateRow[] = [];
+  const orderIds = (matchedOrders ?? []).map((o: { id: string }) => o.id);
+  if (orderIds.length > 0) {
+    const { data, error } = await supabase
+      .from('uploads')
+      .select('id, order_id, user_id, order_name, insole_user_name, insole_user_kana, created_at')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    uploadsFromOrders = (data ?? []) as CandidateRow[];
+  }
+
+  const merged = new Map<string, ShipmentCandidate>();
+  for (const row of [...((uploadsDirect ?? []) as CandidateRow[]), ...uploadsFromOrders]) {
+    merged.set(row.id, {
+      upload_id: row.id,
+      order_id: row.order_id,
+      user_id: row.user_id,
+      order_name: row.order_name,
+      insole_user_name: row.insole_user_name,
+      insole_user_kana: row.insole_user_kana,
+      uploaded_at: row.created_at,
+    });
+  }
+
+  let candidates = Array.from(merged.values());
+
+  if (excludeAlreadyActive && candidates.length > 0) {
+    const ids = candidates.map((c) => c.upload_id);
+    const { data: activeItems, error: activeErr } = await supabase
+      .from('shipment_items')
+      .select('upload_id')
+      .eq('is_active', true)
+      .in('upload_id', ids);
+    if (activeErr) throw activeErr;
+    const activeSet = new Set((activeItems ?? []).map((r: { upload_id: string | null }) => r.upload_id));
+    candidates = candidates.filter((c) => !activeSet.has(c.upload_id));
+  }
+
+  candidates.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
+  return candidates;
+}
+
+/**
+ * 顧客をセッションに追加する唯一の正式な経路(RPC経由)。
+ * 既に別(または同一)セッションに有効な配送記録がある場合はRPC側で自動的に無効化してから追加する。
+ */
+export async function addUploadToShipmentBatch(
+  batchId: string,
+  uploadId: string,
+  orderId: string | null,
+  productionWorkflowId: string | null,
+  customerId: string | null,
+  changedById: string | null
+): Promise<ShipmentItem> {
+  const { data, error } = await supabase.rpc('add_to_shipment_batch', {
+    p_batch_id: batchId,
+    p_upload_id: uploadId,
+    p_order_id: orderId,
+    p_production_workflow_id: productionWorkflowId,
+    p_customer_id: customerId,
+    p_changed_by_id: changedById,
+  });
+  if (error) throw error;
+  return data as ShipmentItem;
+}
+
+/**
+ * 顧客をセッションから外す唯一の正式な経路(RPC経由)。無効化するのみで物理削除はしない。
+ */
+export async function removeShipmentItem(
+  shipmentItemId: string,
+  changedById: string | null,
+  reason?: string
+): Promise<ShipmentItem> {
+  const { data, error } = await supabase.rpc('remove_from_shipment_batch', {
+    p_shipment_item_id: shipmentItemId,
+    p_changed_by_id: changedById,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data as ShipmentItem;
+}
+
+/** CSV出力用: 配送先住所(upload_ship)を複数upload_idで一括取得 */
+export interface UploadShipRecord {
+  id: string;
+  upload_id: string;
+  ship_name: string | null;
+  ship_kana: string | null;
+  postal_code: string | null;
+  prefecture: string | null;
+  city: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  phone: string | null;
+}
+
+export async function fetchUploadShipByUploadIds(uploadIds: string[]): Promise<Map<string, UploadShipRecord>> {
+  if (uploadIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('upload_ship')
+    .select('id, upload_id, ship_name, ship_kana, postal_code, prefecture, city, address_line1, address_line2, phone')
+    .in('upload_id', uploadIds);
+  if (error) throw error;
+  const map = new Map<string, UploadShipRecord>();
+  for (const row of (data ?? []) as UploadShipRecord[]) {
+    map.set(row.upload_id, row);
+  }
+  return map;
+}
+
+/**
+ * CSV出力用: ordersテーブルの配送先情報(upload_shipが無い場合のフォールバック用)を
+ * 複数order_idで一括取得する。
+ */
+export interface OrderShipInfo {
+  id: string;
+  ship_name: string | null;
+  ship_phone: string | null;
+  ship_postal_code: string | null;
+  ship_prefecture: string | null;
+  ship_city: string | null;
+  ship_address_line1: string | null;
+  ship_address_line2: string | null;
+}
+
+export async function fetchOrdersShipInfoByIds(orderIds: string[]): Promise<Map<string, OrderShipInfo>> {
+  if (orderIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id, ship_name, ship_phone, ship_postal_code, ship_prefecture, ship_city, ship_address_line1, ship_address_line2')
+    .in('id', orderIds);
+  if (error) throw error;
+  const map = new Map<string, OrderShipInfo>();
+  for (const row of (data ?? []) as OrderShipInfo[]) {
+    map.set(row.id, row);
+  }
+  return map;
+}
+
+/**
+ * CSVをSupabase Storage(upsysバケット)へアップロードし公開URLを返す。
+ * 将来ヤマト運輸(黒猫)のシステムへ投入することを見据え、UTF-8 BOM付きで保存する
+ * (Excel/Windows系ツールでの文字化け防止)。
+ */
+export async function uploadShipmentCsvToStorage(
+  batchId: string,
+  csvContent: string
+): Promise<{ url: string }> {
+  const timestamp = Date.now();
+  const storagePath = `shipment-csv/${batchId}/${timestamp}.csv`;
+  const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+
+  const { error } = await supabase.storage.from('upsys').upload(storagePath, blob, {
+    upsert: false,
+    contentType: 'text/csv',
+  });
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage.from('upsys').getPublicUrl(storagePath);
+  return { url: urlData.publicUrl };
+}
+
+/** CSV生成完了をセッションに記録する(address_csv_urlを保存) */
+export async function finalizeShipmentBatchCsv(batchId: string, csvUrl: string): Promise<ShipmentBatch> {
+  const { data, error } = await supabase
+    .from('shipment_batches')
+    .update({ address_csv_url: csvUrl, updated_at: new Date().toISOString() })
+    .eq('id', batchId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ShipmentBatch;
 }

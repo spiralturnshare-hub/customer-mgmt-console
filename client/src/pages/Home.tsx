@@ -12,7 +12,7 @@
  *   使う想定のため、普通のテキスト入力欄のままで対応できる(追加実装不要)。
  */
 import { useState, useEffect, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2 } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2, Truck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -307,6 +307,7 @@ function CustomerCard({
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function Home() {
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [workflows, setWorkflows] = useState<Map<string, ProductionWorkflow>>(new Map());
   const [measurements, setMeasurements] = useState<Map<string, FootMeasurementRow>>(new Map());
@@ -396,9 +397,20 @@ export default function Home() {
     <div className="min-h-screen" style={{ backgroundColor: "#f5f5f5" }}>
       <div className="max-w-5xl mx-auto px-6 py-7">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-xl font-bold" style={{ color: "#1a1a1a" }}>
-            作製中一覧
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold" style={{ color: "#1a1a1a" }}>
+              作製中一覧
+            </h1>
+            <button
+              type="button"
+              onClick={() => setLocation('/shipments')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all active:scale-95"
+              style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+            >
+              <Truck size={13} strokeWidth={2} />
+              配送管理
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search

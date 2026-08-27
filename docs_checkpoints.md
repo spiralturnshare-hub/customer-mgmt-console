@@ -85,4 +85,20 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - 追跡番号入力欄を追加(`saveTrackingNumber`で保存)。物理バーコードスキャナー(キーボード入力互換)での運用を想定し、普通のテキスト入力欄のままで対応(追加のバーコード読取実装は無し)。
   - `fetchWorkflowsByUploadIds`/`fetchMeasurementsByUploadIds`(一括取得関数)を新設し、一覧画面でのN+1クエリを回避。
 
+### CP13 (2026-08-27 配送管理(セッション単位の一括発送処理)着手前)
+- コミット: `3a5c12c`
+- 内容: 本日は「配送管理(セッション単位の一括発送処理)」機能に着手予定。CP8で単件の配送管理(追跡番号・発送完了)を実装済みだが、今回は`shipment_batches`/`shipment_items`を使った複数顧客一括処理のセッション管理UIを新規実装する。着手前のベースライン。
+
+### CP14 (2026-08-27 配送管理(セッション単位の一括発送処理) 追加後)
+- コミット: (このコミット自身のハッシュ。`git log --oneline -1`で確認)
+- **前提**: `supabase_migrations/005_shipment_batch_management.sql`を本人が事前にSupabase SQL Editorで実行済みであること(`shipment_items.is_active`等の列、`add_to_shipment_batch`/`remove_from_shipment_batch` RPCを追加するマイグレーション)。
+- 内容:
+  - 新規ページ`ShipmentSessionList.tsx`(`/shipments`): セッション一覧(下書き=カード表示、CSV生成完了=テーブル表示の履歴)。「+ 新しいセッション」で出荷予定日(任意)を指定して作成。
+  - 新規ページ`ShipmentBatchDetail.tsx`(`/shipments/:id`): セッション詳細(最終更新/最終編集者/配送予定日編集/注文数)、CSV生成実行・ダウンロード、リスト内注文のテーブル(検索・削除)、「+ まとめて追加」モーダル。
+  - 追加モーダルは氏名・かな・ST始まりの注文ID・メール・電話のいずれでも検索可能(`searchCandidateUploads`、uploads/orders結合、既に有効な配送記録がある顧客は候補から自動除外)。音声検索(Web Speech API、`lang="ja-JP"`、非対応ブラウザではマイクボタン非表示)、複数選択一括追加と単独追加の両方に対応。
+  - 顧客の追加・削除は物理削除ではなく、必ず`add_to_shipment_batch`/`remove_from_shipment_batch` RPC経由(無効化+新規追加方式)で行う。`shipment_items`への直接updateは行っていない。
+  - CSV出力は将来のヤマト運輸(黒猫)投入を見据えた列構成(お客様管理番号/郵便番号/都道府県/市区町村/住所1・2/氏名/氏名カナ/電話番号/依頼主名固定値/品名)。UTF-8 BOM付きで`upsys`バケットへ保存し、`shipment_batches.address_csv_url`に記録。ヤマトAPIとの実連携はスコープ外。
+  - `Home.tsx`ヘッダーに「配送管理」への導線ボタンを追加(常設サイドバーは今回スコープ外)。
+  - `npm run check`・`npm run build`とも成功を確認済み。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
