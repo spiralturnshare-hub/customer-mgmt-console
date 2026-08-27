@@ -2,28 +2,42 @@
  * 作製中一覧 - CRMトップ画面
  * データソース: Supabase Green (fhamrkmsxidxayaoexso) の uploads テーブル
  * upload-center から送信されたデータをリアルタイムで表示する
+ *
+ * 2026-08-27: 顧客詳細画面を開かずにこの一覧から直接操作できるよう変更。
+ * - 計測・分析ステップは production_workflows と連携する実データ(以前はローカルのみの
+ *   ダミー状態だった)。
+ * - 計測・分析ボタンを追加(顧客詳細画面と同じ導線: 計測はfoot-measureを新タブで開く、
+ *   分析はGaitAnalysis画面へ遷移)。
+ * - 追跡番号の入力欄を追加。バーコードスキャナー(キーボード入力互換の物理機器)を
+ *   使う想定のため、普通のテキスト入力欄のままで対応できる(追加実装不要)。
  */
 import { useState, useEffect, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLocation } from "wouter";
-import { fetchUploads, type UploadRecord } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  fetchUploads,
+  fetchWorkflowsByUploadIds,
+  fetchMeasurementsByUploadIds,
+  toggleWorkflowStep,
+  saveTrackingNumber,
+  fetchCurrentMember,
+  type UploadRecord,
+  type ProductionWorkflow,
+  type WorkflowStep,
+  type FootMeasurementRow,
+} from "@/lib/supabase";
 
-// ─── 型定義 ────────────────────────────────────────────────────────────────
-interface ProgressRow {
-  id: number;
-  keisoku: boolean;
-  bunseki: boolean;
-  sekkei: boolean;
-  sakusei: boolean;
-  hassou: boolean;
-  shukkaDate: string;
-}
+const PINK = "#D62598";
+// foot-measure(足の計測アプリ、別デプロイ)への連携URL
+const FOOT_MEASURE_URL = "https://foot-measure.vercel.app";
 
 interface Customer {
   id: string;
+  orderId: string | null;
   uploadA?: string;
   uploadB?: string;
   uploadedAt?: string;
@@ -31,13 +45,13 @@ interface Customer {
   customerName: string;
   selectedInsoles: string[];
   status: string | null;
-  rows: ProgressRow[];
 }
 
 // UploadRecord → Customer 変換
 function mapUploadToCustomer(u: UploadRecord): Customer {
   return {
     id: u.id,
+    orderId: u.order_id,
     uploadA: u.guest_tf ? 'ゲストアップロード' : undefined,
     uploadB: u.insole_user_name ?? undefined,
     uploadedAt: u.created_at
@@ -50,28 +64,41 @@ function mapUploadToCustomer(u: UploadRecord): Customer {
     customerName: u.insole_user_name ?? '（名前未設定）',
     selectedInsoles: u.selected_insoles ?? [],
     status: u.status,
-    rows: [
-      { id: 1, keisoku: false, bunseki: false, sekkei: false, sakusei: false, hassou: false, shukkaDate: '' },
-    ],
   };
 }
 
-// ─── 進捗テーブル ─────────────────────────────────────────────────────────
-const COLUMNS = [
-  { label: "計測", field: "keisoku" as const },
-  { label: "分析", field: "bunseki" as const },
-  { label: "設計", field: "sekkei" as const },
-  { label: "作製", field: "sakusei" as const },
-  { label: "発送", field: "hassou" as const },
+// ─── 進捗テーブル(実データ連携) ─────────────────────────────────────────────
+const COLUMNS: { label: string; step: WorkflowStep }[] = [
+  { label: "計測", step: "measure" },
+  { label: "分析", step: "analy" },
+  { label: "設計", step: "design" },
+  { label: "作製", step: "produce" },
+  { label: "発送", step: "ship" },
 ];
 
 function ProgressTable({
-  rows,
+  workflow,
+  pendingStep,
   onToggle,
+  onOpenMeasure,
+  onOpenAnalysis,
+  trackingInput,
+  onTrackingInputChange,
+  onSaveTracking,
+  savingTracking,
 }: {
-  rows: ProgressRow[];
-  onToggle: (rowId: number, field: keyof Omit<ProgressRow, "id" | "shukkaDate">) => void;
+  workflow: ProductionWorkflow | null;
+  pendingStep: WorkflowStep | null;
+  onToggle: (step: WorkflowStep, nextDone: boolean) => void;
+  onOpenMeasure: () => void;
+  onOpenAnalysis: () => void;
+  trackingInput: string;
+  onTrackingInputChange: (v: string) => void;
+  onSaveTracking: () => void;
+  savingTracking: boolean;
 }) {
+  const doneFor = (step: WorkflowStep): boolean => Boolean(workflow?.[`${step}_done` as keyof ProductionWorkflow]);
+
   return (
     <div className="mt-4 overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
@@ -79,9 +106,9 @@ function ProgressTable({
           <tr>
             {COLUMNS.map((col) => (
               <th
-                key={col.field}
+                key={col.step}
                 className="px-5 py-2 text-left font-normal text-xs border-b border-border"
-                style={{ color: "#aaa", minWidth: 60 }}
+                style={{ color: "#aaa", minWidth: 90 }}
               >
                 {col.label}
               </th>
@@ -92,32 +119,81 @@ function ProgressTable({
             >
               出荷日
             </th>
+            <th
+              className="px-5 py-2 text-left font-normal text-xs border-b border-border"
+              style={{ color: "#aaa", minWidth: 160 }}
+            >
+              追跡番号
+            </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              {COLUMNS.map((col) => (
-                <td key={col.field} className="px-5 py-2">
-                  <Checkbox
-                    checked={row[col.field]}
-                    onCheckedChange={() => onToggle(row.id, col.field)}
-                    className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
-                    style={
-                      !row[col.field]
-                        ? { borderColor: "#ccc", backgroundColor: "transparent" }
-                        : {}
-                    }
-                  />
+          <tr>
+            {COLUMNS.map((col) => {
+              const isPending = pendingStep === col.step;
+              const done = doneFor(col.step);
+              return (
+                <td key={col.step} className="px-5 py-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={done}
+                      disabled={isPending}
+                      onCheckedChange={() => onToggle(col.step, !done)}
+                      className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
+                      style={!done ? { borderColor: "#ccc", backgroundColor: "transparent" } : {}}
+                    />
+                    {col.step === "measure" && (
+                      <button
+                        type="button"
+                        onClick={onOpenMeasure}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                        style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+                      >
+                        計測
+                      </button>
+                    )}
+                    {col.step === "analy" && (
+                      <button
+                        type="button"
+                        onClick={onOpenAnalysis}
+                        className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                        style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+                      >
+                        分析
+                      </button>
+                    )}
+                  </div>
                 </td>
-              ))}
-              <td className="px-5 py-2">
-                <span className="text-xs" style={{ color: "#aaa" }}>
-                  {row.shukkaDate || "—"}
-                </span>
-              </td>
-            </tr>
-          ))}
+              );
+            })}
+            <td className="px-5 py-2">
+              <span className="text-xs" style={{ color: "#aaa" }}>
+                {workflow?.shipped_at ? new Date(workflow.shipped_at).toLocaleDateString('ja-JP') : "—"}
+              </span>
+            </td>
+            <td className="px-5 py-2">
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={trackingInput}
+                  onChange={(e) => onTrackingInputChange(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && onSaveTracking()}
+                  placeholder="バーコードを読取/入力"
+                  className="text-xs border rounded-md px-2 py-1 w-28"
+                  style={{ borderColor: "#ddd" }}
+                />
+                <button
+                  type="button"
+                  onClick={onSaveTracking}
+                  disabled={savingTracking}
+                  className="text-[10px] font-bold px-1.5 py-1 rounded whitespace-nowrap disabled:opacity-60"
+                  style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+                >
+                  {savingTracking ? "…" : "保存"}
+                </button>
+              </div>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -127,12 +203,34 @@ function ProgressTable({
 // ─── 顧客カード ───────────────────────────────────────────────────────────
 function CustomerCard({
   customer,
+  workflow,
+  measurement,
+  pendingStep,
   onToggle,
+  trackingInput,
+  onTrackingInputChange,
+  onSaveTracking,
+  savingTracking,
 }: {
   customer: Customer;
-  onToggle: (cid: string, rowId: number, field: keyof Omit<ProgressRow, "id" | "shukkaDate">) => void;
+  workflow: ProductionWorkflow | null;
+  measurement: FootMeasurementRow | null;
+  pendingStep: WorkflowStep | null;
+  onToggle: (cid: string, step: WorkflowStep, nextDone: boolean) => void;
+  trackingInput: string;
+  onTrackingInputChange: (v: string) => void;
+  onSaveTracking: () => void;
+  savingTracking: boolean;
 }) {
   const [, setLocation] = useLocation();
+
+  function handleOpenMeasure() {
+    const params = new URLSearchParams({ uploadId: customer.id });
+    if (customer.orderId) params.set('orderId', customer.orderId);
+    if (measurement) params.set('readjust', measurement.id);
+    window.open(`${FOOT_MEASURE_URL}/measure?${params.toString()}`, '_blank', 'noopener,noreferrer');
+  }
+
   return (
     <div
       className="bg-white rounded-xl border border-border p-5 mb-4"
@@ -192,8 +290,15 @@ function CustomerCard({
         </button>
       </div>
       <ProgressTable
-        rows={customer.rows}
-        onToggle={(rowId, field) => onToggle(customer.id, rowId, field)}
+        workflow={workflow}
+        pendingStep={pendingStep}
+        onToggle={(step, nextDone) => onToggle(customer.id, step, nextDone)}
+        onOpenMeasure={handleOpenMeasure}
+        onOpenAnalysis={() => setLocation(`/customer/${customer.id}/analysis`)}
+        trackingInput={trackingInput}
+        onTrackingInputChange={onTrackingInputChange}
+        onSaveTracking={onSaveTracking}
+        savingTracking={savingTracking}
       />
     </div>
   );
@@ -201,17 +306,36 @@ function CustomerCard({
 
 // ─── メインページ ─────────────────────────────────────────────────────────
 export default function Home() {
+  const { user } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [workflows, setWorkflows] = useState<Map<string, ProductionWorkflow>>(new Map());
+  const [measurements, setMeasurements] = useState<Map<string, FootMeasurementRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [memberId, setMemberId] = useState<string | null>(null);
+
+  const [pendingKey, setPendingKey] = useState<string | null>(null); // `${uploadId}:${step}`
+  const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
+  const [savingTrackingId, setSavingTrackingId] = useState<string | null>(null);
 
   const loadUploads = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const records = await fetchUploads({ limit: 100 });
-      setCustomers(records.map(mapUploadToCustomer));
+      const mapped = records.map(mapUploadToCustomer);
+      setCustomers(mapped);
+      const ids = mapped.map((c) => c.id);
+      const [wfMap, measureMap] = await Promise.all([
+        fetchWorkflowsByUploadIds(ids),
+        fetchMeasurementsByUploadIds(ids),
+      ]);
+      setWorkflows(wfMap);
+      setMeasurements(measureMap);
+      setTrackingInputs(
+        Object.fromEntries(mapped.map((c) => [c.id, wfMap.get(c.id)?.tracking_number ?? '']))
+      );
     } catch (e) {
       console.error('Failed to fetch uploads:', e);
       setError('データの取得に失敗しました。再読み込みしてください。');
@@ -224,24 +348,38 @@ export default function Home() {
     loadUploads();
   }, [loadUploads]);
 
-  const handleToggle = (
-    cid: string,
-    rowId: number,
-    field: keyof Omit<ProgressRow, "id" | "shukkaDate">
-  ) => {
-    setCustomers((prev) =>
-      prev.map((c) =>
-        c.id === cid
-          ? {
-              ...c,
-              rows: c.rows.map((r) =>
-                r.id === rowId ? { ...r, [field]: !r[field] } : r
-              ),
-            }
-          : c
-      )
-    );
-  };
+  useEffect(() => {
+    if (!user) return;
+    fetchCurrentMember(user.id).then((m) => setMemberId(m?.id ?? null));
+  }, [user]);
+
+  async function handleToggle(uploadId: string, step: WorkflowStep, nextDone: boolean) {
+    const key = `${uploadId}:${step}`;
+    setPendingKey(key);
+    try {
+      const customer = customers.find((c) => c.id === uploadId);
+      const updated = await toggleWorkflowStep(uploadId, customer?.orderId ?? null, step, nextDone, memberId);
+      setWorkflows((prev) => new Map(prev).set(uploadId, updated));
+    } catch (e) {
+      // 失敗時は表示を変更せず据え置く
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleSaveTracking(uploadId: string) {
+    setSavingTrackingId(uploadId);
+    try {
+      const customer = customers.find((c) => c.id === uploadId);
+      const value = trackingInputs[uploadId] ?? '';
+      const updated = await saveTrackingNumber(uploadId, customer?.orderId ?? null, value.trim());
+      setWorkflows((prev) => new Map(prev).set(uploadId, updated));
+    } catch (e) {
+      // 失敗時は入力値を保持したまま据え置く
+    } finally {
+      setSavingTrackingId(null);
+    }
+  }
 
   const filtered = customers.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -313,13 +451,24 @@ export default function Home() {
             該当するデータがありません
           </div>
         )}
-        {!loading && !error && filtered.map((customer) => (
-          <CustomerCard
-            key={customer.id}
-            customer={customer}
-            onToggle={handleToggle}
-          />
-        ))}
+        {!loading && !error && filtered.map((customer) => {
+          const [pendingUploadId, pendingStepRaw] = (pendingKey ?? '').split(':');
+          const pendingStep = pendingUploadId === customer.id ? (pendingStepRaw as WorkflowStep) : null;
+          return (
+            <CustomerCard
+              key={customer.id}
+              customer={customer}
+              workflow={workflows.get(customer.id) ?? null}
+              measurement={measurements.get(customer.id) ?? null}
+              pendingStep={pendingStep}
+              onToggle={handleToggle}
+              trackingInput={trackingInputs[customer.id] ?? ''}
+              onTrackingInputChange={(v) => setTrackingInputs((prev) => ({ ...prev, [customer.id]: v }))}
+              onSaveTracking={() => handleSaveTracking(customer.id)}
+              savingTracking={savingTrackingId === customer.id}
+            />
+          );
+        })}
       </div>
     </div>
   );

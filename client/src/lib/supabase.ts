@@ -343,6 +343,24 @@ export interface WorkflowStepDisplay {
   byName: string | null;
 }
 
+/**
+ * 複数upload_idのproduction_workflowsを一括取得し、upload_idをキーにしたMapで返す
+ * (作製中一覧画面で1件ずつ問い合わせるとN+1になるため)
+ */
+export async function fetchWorkflowsByUploadIds(uploadIds: string[]): Promise<Map<string, ProductionWorkflow>> {
+  if (uploadIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('production_workflows')
+    .select('*')
+    .in('upload_id', uploadIds);
+  if (error) throw error;
+  const map = new Map<string, ProductionWorkflow>();
+  for (const row of (data ?? []) as ProductionWorkflow[]) {
+    if (row.upload_id) map.set(row.upload_id, row);
+  }
+  return map;
+}
+
 /** upload_idに紐づくproduction_workflowを取得(無ければnull) */
 export async function fetchWorkflowByUploadId(uploadId: string): Promise<ProductionWorkflow | null> {
   const { data, error } = await supabase
@@ -531,6 +549,23 @@ export interface FootMeasurementRow {
   insole_size: string | null;
   shoe_size: string | null;
   shoe_brand: string | null;
+}
+
+/** 複数upload_idの計測結果を一括取得し、upload_idをキーにしたMapで返す(作製中一覧用) */
+export async function fetchMeasurementsByUploadIds(uploadIds: string[]): Promise<Map<string, FootMeasurementRow>> {
+  if (uploadIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('foot_measurements')
+    .select(
+      'id, upload_id, order_id, status, measured_at, left_foot_length, right_foot_length, left_foot_width, right_foot_width, left_heel_to_mp, right_heel_to_mp, left_first_ip, right_first_ip, left_leb, right_leb, insole_size, shoe_size, shoe_brand'
+    )
+    .in('upload_id', uploadIds);
+  if (error) throw error;
+  const map = new Map<string, FootMeasurementRow>();
+  for (const row of (data ?? []) as FootMeasurementRow[]) {
+    if (row.upload_id) map.set(row.upload_id, row);
+  }
+  return map;
 }
 
 /** upload_idに紐づく計測結果を取得(無ければnull) */
