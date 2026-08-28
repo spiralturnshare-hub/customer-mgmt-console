@@ -114,4 +114,15 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - `npm run check`・`npm run build`とも成功を確認済み。
   - **スコープ外(意図的に対象外)**: メール招待フロー、RLSの実装、工程進捗バー内の個別ボタンの出し分け、GaitAnalysis.tsx/ShipmentBatchDetail.tsx等の他ページへの権限適用。
 
+### CP16 (2026-08-28 認証をコード直接入力方式へ統一 / S2 の4本目・最終)
+- コミット(着手前): `ca666a7`("docs: CP15にコミットハッシュを記録")
+- Vercel Production(着手前): `customer-mgmt-console-4la7zzkpr`(公開URL `https://customer-console-jade.vercel.app`)
+- 背景: dealer-insole-order(CP3)・dealer-mgmt-console(CP4)・foot-measure(CP5)と同じ。メール内マジックリンクがモバイルで機能しない問題(アプリ内ブラウザにセッション隔離 / Gmail の URL 先読みでトークン消費)を、認証を持つ全アプリへ横展開する S2 の最後の1本。dealer-insole-order で実機ログイン確認済み。
+- 変更内容:
+  - `client/src/lib/supabase.ts`: `verifyOtpCode(email, token)` を新設(`supabase.auth.verifyOtp({ type: 'email' })`)。既存 `sendMagicLink` に `shouldCreateUser: false` を追加(**これまで未指定=true だった**。社内スタッフ用コンソールなので事前登録済み system_members のメールに限定)。`emailRedirectTo` は保険で残置。2026-08-28 失敗史の注釈を追加。
+  - `client/src/pages/SignIn.tsx`: 「送信 → 完了画面」から「送信 → 確認コード入力 → verifyOtp」の2ステップへ。`@/lib/supabase` から `sendMagicLink` / `verifyOtpCode` を直接 import(このアプリの既存パターン。AuthContext は user/session の追跡のみで認証アクションは持たない)。コード欄は数字のみ・桁数寛容(4〜10、Email OTP Length 設定に追従)。案内文を「メール記載のコードを入力。リンクは使わない」に変更。
+- DB/RLS への影響: なし(`verifyOtp` は RLS を通らない。migration 不要)。
+- ビルド: `npx vite build` 成功。`npx tsc --noEmit` = **エラー0件**(変更2ファイル含め全体クリーン)。
+- 戻し方: Vercel → customer-mgmt-console → Deployments で `4la7zzkpr`(着手前の本番)を Promote to Production。またはコミット `ca666a7` へ `git reset --hard`(要・複数回許可)。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
