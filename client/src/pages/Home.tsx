@@ -12,7 +12,8 @@
  *   使う想定のため、普通のテキスト入力欄のままで対応できる(追加実装不要)。
  */
 import { useState, useEffect, useCallback } from "react";
-import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2, Truck, ShieldCheck } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown, ExternalLink, MessageCircle, RefreshCw, Loader2, Truck, ShieldCheck, LogOut } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,6 +27,7 @@ import {
   saveTrackingNumber,
   fetchCurrentMember,
   fetchCurrentMemberFull,
+  signOut,
   type UploadRecord,
   type ProductionWorkflow,
   type WorkflowStep,
@@ -321,6 +323,7 @@ export default function Home() {
   const [pendingKey, setPendingKey] = useState<string | null>(null); // `${uploadId}:${step}`
   const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
   const [savingTrackingId, setSavingTrackingId] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   const loadUploads = useCallback(async () => {
     setLoading(true);
@@ -384,6 +387,18 @@ export default function Home() {
       // 失敗時は入力値を保持したまま据え置く
     } finally {
       setSavingTrackingId(null);
+    }
+  }
+
+  // サインアウト: supabase.auth.signOut() → AuthContext の onAuthStateChange が発火し
+  // user が null に → App.tsx の AuthGuard が自動で <SignIn /> を表示するため画面遷移は不要。
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await signOut();
+    } catch {
+      setSigningOut(false);
+      toast.error('サインアウトに失敗しました。時間をおいて再度お試しください。');
     }
   }
 
@@ -461,6 +476,20 @@ export default function Home() {
               style={{ color: "#555" }}
             >
               <RefreshCw size={13} strokeWidth={1.8} className={loading ? 'animate-spin' : ''} />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              title={user?.email ? `${user.email} をサインアウト` : 'サインアウト'}
+              className="h-9 px-3 gap-1.5 bg-white border-border text-sm font-normal"
+              style={{ color: "#555" }}
+            >
+              {signingOut
+                ? <Loader2 size={13} strokeWidth={1.8} className="animate-spin" />
+                : <LogOut size={13} strokeWidth={1.8} />}
+              <span className="hidden sm:inline">サインアウト</span>
             </Button>
           </div>
         </div>

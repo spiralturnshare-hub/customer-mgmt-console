@@ -157,4 +157,16 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 案内文言(2026-09-01 冨永社長修正): 「10秒ほどお待ちください」だけだと「コードが届くまで待つ」と誤読されるため → **「確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。」**
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `87ifb7tff`(着手前の本番)を Promote to Production。またはコミット `95ad7c3` へ戻す(要・複数回許可)。
 
+### CP18 (2026-09-01 作製中一覧ヘッダーにサインアウトボタンを追加)
+- コミット(着手前): `cc2aef4`("docs(checkpoints): CPにデプロイ結果と文言修正を追記")
+- Vercel Production(着手前): `customer-mgmt-console-cexi3phk6`(公開URL `https://customer-console-jade.vercel.app`)
+- 背景: このアプリには UI 上にサインアウト手段が無かった(`lib/supabase.ts` に `signOut()` は実装済みだが未接続)。冨永社長の依頼で追加(foot-measure CP6 と同じ対応)。サインインのクールダウン(CP17)を実機確認するにもサインアウトが必要。
+- 変更内容(`client/src/pages/Home.tsx` のみ):
+  - `@/lib/supabase` から `signOut` を、`lucide-react` から `LogOut` を、`sonner` から `toast` を import 追加。
+  - `signingOut` state と `handleSignOut()` を追加。`signOut()` 成功後は AuthContext の `onAuthStateChange` → `user` が null → `App.tsx` の `AuthGuard` が自動で `<SignIn />` を表示するため画面遷移コードは持たない。失敗時のみ `toast.error` + ボタン再有効化。
+  - ヘッダー右側クラスタ(検索・フィルタ・更新ボタンの並び)の末尾に「サインアウト」ボタンを追加。`LogOut` アイコン + ラベル(狭幅では `hidden sm:inline` でアイコンのみ)、`title` にログイン中メール。処理中は `Loader2` スピナー。
+- DB/RLS への影響: なし。
+- ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01 実行)。
+- 戻し方: Vercel → customer-mgmt-console → Deployments で `cexi3phk6`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
