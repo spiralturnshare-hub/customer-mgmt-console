@@ -27,11 +27,14 @@ import {
   saveTrackingNumber,
   fetchCurrentMember,
   fetchCurrentMemberFull,
+  fetchOrderMetaByIds,
+  canViewCustomerNameInList,
   signOut,
   type UploadRecord,
   type ProductionWorkflow,
   type WorkflowStep,
   type FootMeasurementRow,
+  type SystemMember,
 } from "@/lib/supabase";
 
 const PINK = "#D62598";
@@ -43,11 +46,20 @@ interface Customer {
   orderId: string | null;
   uploadA?: string;
   uploadB?: string;
-  uploadedAt?: string;
-  orderCode?: string;
+  uploadedAt?: string;      // アップロード日時(uploads.created_at)
+  orderPlacedAt?: string;   // 発注日 = 決済完了日(YYYY/MM/DD)。orders 由来、後追いで埋める
+  orderCode?: string;       // 注文番号(orders.order_name。ST-.../EM-...)
   customerName: string;
   selectedInsoles: string[];
   status: string | null;
+}
+
+// ISO 文字列 → "YYYY/MM/DD"(発注日は日付のみで足りる。アップロード日との「離れ」を見るのが目的)
+function fmtDate(iso: string | null | undefined): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
 }
 
 // UploadRecord → Customer 変換
@@ -206,6 +218,7 @@ function ProgressTable({
 // ─── 顧客カード ───────────────────────────────────────────────────────────
 function CustomerCard({
   customer,
+  showName,
   workflow,
   measurement,
   pendingStep,
@@ -216,6 +229,7 @@ function CustomerCard({
   savingTracking,
 }: {
   customer: Customer;
+  showName: boolean;
   workflow: ProductionWorkflow | null;
   measurement: FootMeasurementRow | null;
   pendingStep: WorkflowStep | null;
@@ -244,19 +258,13 @@ function CustomerCard({
           {customer.uploadA}
         </p>
       )}
-      {customer.uploadB && (
-        <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
-          {customer.uploadB}
-        </p>
-      )}
-      {customer.uploadedAt && (
-        <p className="text-xs mb-0.5" style={{ color: "#aaa", letterSpacing: "0.02em" }}>
-          {customer.uploadedAt}
-        </p>
-      )}
-      {customer.orderCode && (
-        <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
-          {customer.orderCode}
+      {/* 発注日(= 決済完了日)とアップロード日を並べる。2つが離れているほど「顧客を待たせている」= 優先度が高い */}
+      {(customer.orderPlacedAt || customer.uploadedAt) && (
+        <p className="text-xs mb-0.5" style={{ color: "#888", letterSpacing: "0.02em" }}>
+          {customer.orderPlacedAt && (
+            <>発注 {customer.orderPlacedAt}<span style={{ color: "#ccc" }}> ／ </span></>
+          )}
+          {customer.uploadedAt && <>アップロード {customer.uploadedAt}</>}
         </p>
       )}
       {customer.selectedInsoles.length > 0 && (
@@ -272,9 +280,18 @@ function CustomerCard({
           ))}
         </div>
       )}
-      <h2 className="text-2xl font-bold mb-4" style={{ color: "#1a1a1a", letterSpacing: "0.05em" }}>
-        {customer.customerName}
+      <h2
+        className={showName ? "text-2xl font-bold mb-1" : "text-2xl font-bold mb-4"}
+        style={{ color: "#1a1a1a", letterSpacing: "0.05em" }}
+      >
+        {showName ? customer.customerName : (customer.orderCode ?? '（注文番号なし）')}
       </h2>
+      {/* 氏名表示中は注文番号を補助表示。氏名非表示の担当者は上の h2 が注文番号そのもの。 */}
+      {showName && (
+        <p className="text-xs font-bold mb-4" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
+          注文番号: {customer.orderCode ?? '—'}
+        </p>
+      )}
       <div className="flex items-center gap-2 mb-1">
         <button
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium transition-all active:scale-95"
@@ -319,6 +336,8 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [memberId, setMemberId] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(false);
+  // 権限列を含むフルのメンバー情報。氏名を一覧に出してよいかの判定に使う。
+  const [member, setMember] = useState<SystemMember | null>(null);
 
   const [pendingKey, setPendingKey] = useState<string | null>(null); // `${uploadId}:${step}`
   const [trackingInputs, setTrackingInputs] = useState<Record<string, string>>({});
@@ -331,12 +350,20 @@ export default function Home() {
     try {
       const records = await fetchUploads({ limit: 100 });
       const mapped = records.map(mapUploadToCustomer);
-      setCustomers(mapped);
       const ids = mapped.map((c) => c.id);
-      const [wfMap, measureMap] = await Promise.all([
+      const orderIds = mapped.map((c) => c.orderId).filter((x): x is string => !!x);
+      const [wfMap, measureMap, orderMeta] = await Promise.all([
         fetchWorkflowsByUploadIds(ids),
         fetchMeasurementsByUploadIds(ids),
+        fetchOrderMetaByIds(orderIds),
       ]);
+      // 発注日(決済完了日)と注文番号を各カードに反映する。
+      for (const c of mapped) {
+        const meta = c.orderId ? orderMeta.get(c.orderId) : undefined;
+        if (meta?.placedAt) c.orderPlacedAt = fmtDate(meta.placedAt);
+        if (!c.orderCode && meta?.orderName) c.orderCode = meta.orderName;
+      }
+      setCustomers(mapped);
       setWorkflows(wfMap);
       setMeasurements(measureMap);
       setTrackingInputs(
@@ -357,9 +384,12 @@ export default function Home() {
   useEffect(() => {
     if (!user) return;
     fetchCurrentMember(user.id).then((m) => setMemberId(m?.id ?? null));
-    // 権限管理(/members)への導線を出すかどうかの判定にはperm_*列を含むフル版が必要なため、
-    // 簡易版のfetchCurrentMemberとは別に呼ぶ。
-    fetchCurrentMemberFull(user.id).then((m) => setIsOwner(m?.role === 'owner'));
+    // 権限管理(/members)への導線判定 + 一覧での氏名表示可否判定に perm_* 列が要るため、
+    // 簡易版の fetchCurrentMember とは別にフル版も呼ぶ。
+    fetchCurrentMemberFull(user.id).then((m) => {
+      setIsOwner(m?.role === 'owner');
+      setMember(m);
+    });
   }, [user]);
 
   async function handleToggle(uploadId: string, step: WorkflowStep, nextDone: boolean) {
@@ -402,14 +432,18 @@ export default function Home() {
     }
   }
 
+  // 氏名を一覧に出してよいか(外注・権限なしは注文番号だけで識別)。
+  const canSeeNames = canViewCustomerNameInList(member);
+
   const filtered = customers.filter((c) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.trim();
     return (
-      c.customerName.includes(q) ||
       (c.orderCode?.includes(q) ?? false) ||
-      (c.uploadA?.includes(q) ?? false) ||
-      (c.uploadB?.includes(q) ?? false)
+      // 氏名で検索できるのは氏名を見られる権限がある場合のみ(マスク時は氏名で当てさせない)
+      (canSeeNames && c.customerName.includes(q)) ||
+      (canSeeNames && (c.uploadB?.includes(q) ?? false)) ||
+      (c.uploadA?.includes(q) ?? false)
     );
   });
 
@@ -515,6 +549,7 @@ export default function Home() {
             <CustomerCard
               key={customer.id}
               customer={customer}
+              showName={canSeeNames}
               workflow={workflows.get(customer.id) ?? null}
               measurement={measurements.get(customer.id) ?? null}
               pendingStep={pendingStep}

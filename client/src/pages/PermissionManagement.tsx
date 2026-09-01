@@ -33,6 +33,7 @@ import {
   updateMemberPermissions,
   createMember,
   CUSTOMER_SECTION_LABELS,
+  LIST_CUSTOMER_NAME_KEY,
   type SystemMember,
   type PermLevel,
   type CustomerSectionKey,
@@ -186,6 +187,24 @@ function MemberCard({
     });
   }
 
+  // 作製中一覧で顧客の氏名を表示するか(visible_customer_sections に混ぜて保存)
+  function toggleListCustomerName() {
+    setDraft((d) => {
+      const has = d.visible_customer_sections.includes(LIST_CUSTOMER_NAME_KEY);
+      return {
+        ...d,
+        visible_customer_sections: has
+          ? d.visible_customer_sections.filter((k) => k !== LIST_CUSTOMER_NAME_KEY)
+          : [...d.visible_customer_sections, LIST_CUSTOMER_NAME_KEY],
+      };
+    });
+  }
+
+  // 外注スタッフ = 顧客の氏名を一切表示しない(他のどの設定より優先)
+  function toggleOutsourced() {
+    setDraft((d) => ({ ...d, is_outsourced: !d.is_outsourced }));
+  }
+
   async function handleSave() {
     if (draft.role === "owner" && hasOtherOwner) {
       setRoleError("オーナーは既に別のメンバーに設定されています。オーナーは常に1名だけです。");
@@ -205,6 +224,7 @@ function MemberCard({
         perm_organization: draft.perm_organization,
         perm_member: draft.perm_member,
         visible_customer_sections: draft.visible_customer_sections,
+        is_outsourced: draft.is_outsourced,
       });
       onUpdated(updated);
       setSaved(true);
@@ -259,6 +279,34 @@ function MemberCard({
             </select>
           </div>
         ))}
+      </div>
+
+      {/* 顧客の氏名を出すか(作製中一覧)。動作分析だけ行う人には氏名を伏せ ID だけで運用するための設定 */}
+      <div className="mb-3 border-t pt-3" style={{ borderColor: "#eee" }}>
+        <p className="text-[11px] font-bold text-gray-500 mb-2">顧客氏名の表示</p>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5">
+          <Checkbox
+            checked={draft.is_outsourced ?? false}
+            onCheckedChange={toggleOutsourced}
+            className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
+          />
+          外注スタッフ(顧客の氏名を一切表示しない。注文番号のみで識別)
+        </label>
+        <label
+          className={`flex items-center gap-1.5 text-xs ${draft.is_outsourced ? "text-gray-300" : "text-gray-600"}`}
+        >
+          <Checkbox
+            checked={!draft.is_outsourced && draft.visible_customer_sections.includes(LIST_CUSTOMER_NAME_KEY)}
+            disabled={draft.is_outsourced ?? false}
+            onCheckedChange={toggleListCustomerName}
+            className="data-[state=checked]:bg-[#D62598] data-[state=checked]:border-[#D62598]"
+          />
+          作製中一覧で顧客の氏名を表示する
+          {draft.is_outsourced && <span className="text-gray-300">(外注のため常に非表示)</span>}
+        </label>
+        <p className="text-[10px] text-gray-400 mt-1">
+          オーナーは常に氏名を表示。上記はメンバーのみに適用されます。
+        </p>
       </div>
 
       {draft.perm_customer !== "none" && (

@@ -98,6 +98,49 @@ export async function fetchUploadById(id: string): Promise<UploadRecord | null> 
 }
 
 /**
+ * 作製中一覧用: 複数の order_id について「注文番号(order_name)」と
+ * 「発注日(= 決済完了日時)」をまとめて取得する。
+ *
+ * 発注日の定義(2026-09-01 冨永社長確定): 顧客が決済を完了した日時。
+ *   1) stripe_payments.paid_at の最古値(その注文に紐づく最初の課金)を優先。
+ *   2) 課金レコードが無ければ orders.created_at にフォールバック。
+ * 注文番号は orders.order_name(UNIQUE。自社ブランド= "ST-...", OEM= "EM-...")。
+ *
+ * 用途: Home(作製中一覧)で「発注日 / アップロード日」の2つを並べ、
+ *       氏名マスク時は order_name を顧客の識別子として表示するため。
+ * N+1 回避のため .in() で一括取得する。RLS で読めない場合は空 Map を返す
+ * (呼び出し側はアップロード日だけで表示を続行する)。
+ */
+export async function fetchOrderMetaByIds(
+  orderIds: string[]
+): Promise<Map<string, { orderName: string | null; placedAt: string | null }>> {
+  const result = new Map<string, { orderName: string | null; placedAt: string | null }>();
+  const ids = Array.from(new Set(orderIds.filter(Boolean)));
+  if (ids.length === 0) return result;
+
+  const [ordersRes, paymentsRes] = await Promise.all([
+    supabase.from('orders').select('id, order_name, created_at').in('id', ids),
+    supabase.from('stripe_payments').select('order_id, paid_at').in('order_id', ids),
+  ]);
+
+  // 注文ごとの最古 paid_at を求める
+  const earliestPaid = new Map<string, string>();
+  for (const p of (paymentsRes.data ?? []) as Array<{ order_id: string | null; paid_at: string | null }>) {
+    if (!p.order_id || !p.paid_at) continue;
+    const cur = earliestPaid.get(p.order_id);
+    if (!cur || p.paid_at < cur) earliestPaid.set(p.order_id, p.paid_at);
+  }
+
+  for (const o of (ordersRes.data ?? []) as Array<{ id: string; order_name: string | null; created_at: string | null }>) {
+    result.set(o.id, {
+      orderName: o.order_name,
+      placedAt: earliestPaid.get(o.id) ?? o.created_at ?? null,
+    });
+  }
+  return result;
+}
+
+/**
  * アップロードのステータスを更新
  */
 export async function updateUploadStatus(
@@ -457,6 +500,7 @@ export async function updateMemberPermissions(
       | 'perm_organization'
       | 'perm_member'
       | 'visible_customer_sections'
+      | 'is_outsourced'
     >
   >
 ): Promise<SystemMember> {
@@ -512,6 +556,31 @@ export function canViewCustomerSection(member: SystemMember | null, sectionKey: 
   if (!member) return false;
   if (member.perm_customer === 'none') return false;
   return member.visible_customer_sections.includes(sectionKey);
+}
+
+// 作製中一覧で「顧客の氏名を表示してよいか」を持たせるキー。
+// visible_customer_sections(text[])に混ぜて保存する(専用カラムを足さず既存列を再利用)。
+// 顧客詳細の「枠」ではないため CUSTOMER_SECTION_LABELS には入れず、権限管理画面で
+// 独立したチェックとして出す。
+export const LIST_CUSTOMER_NAME_KEY = 'list_customer_name';
+
+/**
+ * 作製中一覧(Home)で、その注文カードに顧客の「氏名」を表示してよいか判定する。
+ * 表示不可なら呼び出し側は氏名の代わりに注文番号(order_name)で識別させる。
+ *
+ * 方針(2026-09-01 冨永社長確定 = (a)+(b)併用):
+ *   - オーナー: 常に表示(判定バイパス)。
+ *   - (a) is_outsourced = true(外注スタッフ): 常に非表示。他の設定より優先。
+ *   - perm_customer = 'none' または 未登録メンバー: 非表示。
+ *   - (b) それ以外: visible_customer_sections に LIST_CUSTOMER_NAME_KEY があれば表示。
+ * 「動作分析だけ行う人には氏名を伏せ ID だけでやり取りする」運用を UI で実現するための土台。
+ */
+export function canViewCustomerNameInList(member: SystemMember | null): boolean {
+  if (member?.role === 'owner') return true;
+  if (!member) return false;
+  if (member.is_outsourced) return false;
+  if (member.perm_customer === 'none') return false;
+  return member.visible_customer_sections.includes(LIST_CUSTOMER_NAME_KEY);
 }
 
 /**

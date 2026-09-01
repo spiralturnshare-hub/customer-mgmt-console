@@ -170,4 +170,23 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - デプロイ済み(2026-09-01): コミット `7ec0740` を push → `vercel deploy --prod` → `customer-mgmt-console-pc3f7ijjv`(本番)。公開URL 200 確認。
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `cexi3phk6`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
 
+### CP19 (2026-09-01 作製中一覧に「発注日/アップロード日」2表記 + 注文番号 + 氏名マスク)
+- コミット(着手前): `196a662`("fix(signin): 再送クールダウン案内を「30秒ほど」に変更 + after N seconds で自動延長")
+- Vercel Production(着手前): `customer-mgmt-console-cjesiy8jj`(公開URL `https://customer-console-jade.vercel.app`)
+- 背景: 冨永社長の依頼。(1)カードにアップロード日しか無く、発注(=注文)日との「離れ」で優先度を判断できない。(2)注文番号が氏名の上に無ラベルで埋もれている。(3)動作分析だけ行う担当者には氏名を伏せ ID(注文番号)だけで運用する方針を UI に実装する。
+- 決定事項(2026-09-01 冨永社長): ①発注日 = **決済完了日時**(`stripe_payments.paid_at` 最古 → 無ければ `orders.created_at`)②OEM 注文番号は `order_name` が既に `EM-...`(自社は `ST-...`)③氏名マスクの制御 = **(a) `is_outsourced` は常に非表示 + (b) 権限管理の新チェック**、オーナーは常に表示 ④マスク時の識別子 = 注文番号のみ。
+- 変更内容:
+  - `client/src/lib/supabase.ts`:
+    - `fetchOrderMetaByIds(orderIds)` 新設 — `orders`(order_name, created_at)+ `stripe_payments`(paid_at)を `.in()` 一括取得し `{orderName, placedAt}` の Map を返す。RLS で読めなければ空 Map(呼び出し側はアップロード日だけで続行)。
+    - `canViewCustomerNameInList(member)` 新設 — owner=常に可 / `is_outsourced`=不可 / `perm_customer==='none'` or 未登録=不可 / それ以外は `visible_customer_sections` に `LIST_CUSTOMER_NAME_KEY`('list_customer_name')があれば可。**専用カラムは足さず既存 `visible_customer_sections`(text[])を再利用**。
+    - `updateMemberPermissions` の Pick に `is_outsourced` を追加。
+  - `client/src/pages/Home.tsx`:
+    - `Customer` に `orderPlacedAt`(YYYY/MM/DD)追加。`loadUploads` の Promise.all に `fetchOrderMetaByIds` を足し、各カードへ発注日・(uploads側が空なら)注文番号を反映。
+    - カード: 日付行を「発注 YYYY/MM/DD ／ アップロード YYYY/MM/DD HH:mm」に統合。氏名の再掲(`uploadB`)行を削除。`<h2>` は `showName ? 氏名 : 注文番号`。氏名表示時のみ「注文番号: ...」補助行。
+    - フルのメンバー情報を state に保持し `canSeeNames = canViewCustomerNameInList(member)` を算出。検索フィルタは氏名を見られない場合、氏名一致を除外(マスク時に氏名で当てさせない)。
+  - `client/src/pages/PermissionManagement.tsx`: メンバー行に「顧客氏名の表示」ブロックを新設 — 「外注スタッフ(氏名を一切表示しない)」トグル(`is_outsourced`)+「作製中一覧で顧客の氏名を表示する」チェック(`list_customer_name`。外注 ON 時は無効・グレー表示)。`handleSave` に `is_outsourced` を追加。
+- DB/RLS への影響: **migration 不要**(`is_outsourced` カラム既存、`visible_customer_sections` は text[] に新キーを混ぜるだけ)。`stripe_payments` の SELECT は既存の org/HQ ポリシーで読める範囲のみ(読めなければ発注日は `orders.created_at` 経由 or 非表示)。
+- ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01)。
+- 戻し方: Vercel → customer-mgmt-console → Deployments で `cjesiy8jj`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
+
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
