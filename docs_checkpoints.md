@@ -187,7 +187,7 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - `client/src/pages/PermissionManagement.tsx`: メンバー行に「顧客氏名の表示」ブロックを新設 — 「外注スタッフ(氏名を一切表示しない)」トグル(`is_outsourced`)+「作製中一覧で顧客の氏名を表示する」チェック(`list_customer_name`。外注 ON 時は無効・グレー表示)。`handleSave` に `is_outsourced` を追加。
 - DB/RLS への影響: **migration 不要**(`is_outsourced` カラム既存、`visible_customer_sections` は text[] に新キーを混ぜるだけ)。`stripe_payments` の SELECT は既存の org/HQ ポリシーで読める範囲のみ(読めなければ発注日は `orders.created_at` 経由 or 非表示)。
 - ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01)。
-- デプロイ済み(2026-09-01): コミット `d9407aa` を push → `vercel deploy --prod` → `customer-mgmt-console-otaisvi3t`(本番)。公開URL 200 確認。
+- デプロイ済み(2026-09-01): コミット `d9407aa` → `customer-mgmt-console-otaisvi3t`。追随修正 `b4186f5` → `customer-mgmt-console-q87hj424i`(発注スロットを常時4パターン表示に: **ゲストアップロード / 発注 <日付> / 発注 日付不明 / 発注情報なし**。発注なしでアップロードする運用があるため空欄にしない。ゲストアップロード=`guest_tf` は発注非紐付け)。公開URL 200 確認。
 - 実データ0件のため見た目確認は E2E モックデータ seed が要る(発注日・注文番号は `orders`/`stripe_payments` 由来のため)。
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `cjesiy8jj`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
 
