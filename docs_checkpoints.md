@@ -153,6 +153,8 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - メールアドレス入力ステップのボタン: `cooldown > 0` の間は無効化しラベルを「送信しました」に。ボタン下に同じ日本語案内文を表示。数字カウントダウンは出さない(冨永社長の指定)。
 - DB/RLS への影響: なし(フロントの状態管理のみ。Supabase 呼び出しの中身は不変)。
 - ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01 実行、1715 modules)。
+- デプロイ済み(2026-09-01): コミット `036858c` を push → `vercel deploy --prod` → `customer-mgmt-console-cexi3phk6`(本番)。公開URL 200 確認。
+- 案内文言(2026-09-01 冨永社長修正): 「10秒ほどお待ちください」だけだと「コードが届くまで待つ」と誤読されるため → **「確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。」**
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `87ifb7tff`(着手前の本番)を Promote to Production。またはコミット `95ad7c3` へ戻す(要・複数回許可)。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
