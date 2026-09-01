@@ -44,6 +44,7 @@ const FOOT_MEASURE_URL = "https://foot-measure.vercel.app";
 interface Customer {
   id: string;
   orderId: string | null;
+  isGuest: boolean;         // 発注に紐づかないゲストアップロード(uploads.guest_tf)
   uploadA?: string;
   uploadB?: string;
   uploadedAt?: string;      // アップロード日時(uploads.created_at)
@@ -67,6 +68,7 @@ function mapUploadToCustomer(u: UploadRecord): Customer {
   return {
     id: u.id,
     orderId: u.order_id,
+    isGuest: u.guest_tf ?? false,
     uploadA: u.guest_tf ? 'ゲストアップロード' : undefined,
     uploadB: u.insole_user_name ?? undefined,
     uploadedAt: u.created_at
@@ -253,20 +255,23 @@ function CustomerCard({
       className="bg-white rounded-xl border border-border p-5 mb-4"
       style={{ boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}
     >
-      {customer.uploadA && (
-        <p className="text-xs font-bold mb-1" style={{ color: "#D62598", letterSpacing: "0.04em" }}>
-          {customer.uploadA}
-        </p>
-      )}
-      {/* 発注日(= 決済完了日)とアップロード日を並べる。2つが離れているほど「顧客を待たせている」= 優先度が高い */}
-      {(customer.orderPlacedAt || customer.uploadedAt) && (
-        <p className="text-xs mb-0.5" style={{ color: "#888", letterSpacing: "0.02em" }}>
-          {customer.orderPlacedAt && (
-            <>発注 {customer.orderPlacedAt}<span style={{ color: "#ccc" }}> ／ </span></>
-          )}
-          {customer.uploadedAt && <>アップロード {customer.uploadedAt}</>}
-        </p>
-      )}
+      {/* 発注情報 ／ アップロード日。2つが離れているほど「顧客を待たせている」= 優先度が高い。
+          発注スロットは必ず4パターンのいずれかを出す:
+            ゲストアップロード / 発注 <日付> / 発注 日付不明(注文はあるが日付が取れない) / 発注情報なし */}
+      <p className="text-xs mb-0.5" style={{ color: "#888", letterSpacing: "0.02em" }}>
+        {customer.isGuest ? (
+          <>発注 <span style={{ color: "#D62598", fontWeight: 700 }}>ゲストアップロード</span></>
+        ) : customer.orderPlacedAt ? (
+          <>発注 {customer.orderPlacedAt}</>
+        ) : customer.orderId ? (
+          <>発注 日付不明</>
+        ) : (
+          <span style={{ color: "#D62598", fontWeight: 700 }}>発注情報なし</span>
+        )}
+        {customer.uploadedAt && (
+          <><span style={{ color: "#ccc" }}> ／ </span>アップロード {customer.uploadedAt}</>
+        )}
+      </p>
       {customer.selectedInsoles.length > 0 && (
         <div className="flex gap-1 mb-2 flex-wrap">
           {customer.selectedInsoles.map((ins) => (
