@@ -167,6 +167,7 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
   - ヘッダー右側クラスタ(検索・フィルタ・更新ボタンの並び)の末尾に「サインアウト」ボタンを追加。`LogOut` アイコン + ラベル(狭幅では `hidden sm:inline` でアイコンのみ)、`title` にログイン中メール。処理中は `Loader2` スピナー。
 - DB/RLS への影響: なし。
 - ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01 実行)。
+- デプロイ済み(2026-09-01): コミット `7ec0740` を push → `vercel deploy --prod` → `customer-mgmt-console-pc3f7ijjv`(本番)。公開URL 200 確認。
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `cexi3phk6`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
