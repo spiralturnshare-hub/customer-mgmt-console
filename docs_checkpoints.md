@@ -126,3 +126,33 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `4la7zzkpr`(着手前の本番)を Promote to Production。またはコミット `ca666a7` へ `git reset --hard`(要・複数回許可)。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
+
+---
+
+## DB migration 010(RLS 硬化)適用 2026-08-28 — コード変更なし
+
+`spiralturn-green-integration/supabase/migrations/010_rls_hardening.sql` を Green Supabase に適用(冨永社長が SQL Editor で実行・検証済み)。customer-mgmt-console への影響:
+
+- `uploads_files` / Storage `upsys` のスタッフ横断 read が、緩いポリシー(`USING true`)から **HQ 権限ポリシー(`hq_has_perm('production'|'analysis'|'measurement'|'shipping', 'view')`)** へ移行。
+  - ログイン中スタッフの `system_members` 行が **HQ(`organization_id IS NULL`)かつ上記いずれかの権限 view 以上**なら、顧客詳細のファイル一覧・プレビューは従来どおり表示される。
+  - 権限が無いスタッフには**見えなくなる**(意図した挙動)。オーナーで見えない場合は `system_members.organization_id` が取扱店シードで汚れていないか確認(`supabase/README.md` のインシデント記録参照)。
+- `organizations` の `USING true` SELECT を削除。スタッフは `"organizations: system_members can read"`(有効メンバー)で従来どおり閲覧可。
+- `commission_ratio_settings` は HQ の `organization` 権限持ちのみ SELECT 可に。
+- 実機確認(未): 顧客詳細でアップロード済みファイルが表示されるか。壊れたら 010 末尾のロールバック SQL。
+
+---
+
+### CP17 (2026-09-01 サインインの確認コード送信にクールダウンを追加)
+- コミット(着手前): `95ad7c3`("feat: サインインを確認コード直接入力方式へ統一(マジックリンク依存を排除)")
+- Vercel Production(着手前): `customer-mgmt-console-87ifb7tff`(公開URL `https://customer-console-jade.vercel.app`)
+- 背景: Supabase Auth は同一メール宛の確認コード再送を約10秒間ブロックする(ホスティング版の固定値・ダッシュボードで変更不可)。従来はこのとき英語のレート制限メッセージを toast でそのまま表示していたため、「別 Google アカウントで誤ログイン → すぐ正しいアカウントで送り直す」等の正当な操作でサインインできず混乱する。冨永社長の依頼で全アプリのサインイン画面に横展開する1本目(2本目=foot-measure)。
+- 変更内容(`client/src/pages/SignIn.tsx` のみ):
+  - `cooldown`(残り秒数)state と 1秒ごとの減算 `useEffect` を追加。定数 `RESEND_COOLDOWN_SEC = 12`(Supabase の約10秒に余裕を足した値)。
+  - `handleSendCode`: 送信成功時に `cooldown` を 12 にセット。`cooldown > 0` の間は送信せず「確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。」を通常 toast で案内。
+  - 送信エラーを判定関数 `isSendRateLimitError`(HTTP 429 か "after N seconds" 文言)で仕分け。レート制限なら英語を出さず上記の日本語案内 + `cooldown` セット。それ以外は従来どおり実エラーを表示。
+  - メールアドレス入力ステップのボタン: `cooldown > 0` の間は無効化しラベルを「送信しました」に。ボタン下に同じ日本語案内文を表示。数字カウントダウンは出さない(冨永社長の指定)。
+- DB/RLS への影響: なし(フロントの状態管理のみ。Supabase 呼び出しの中身は不変)。
+- ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(2026-09-01 実行、1715 modules)。
+- 戻し方: Vercel → customer-mgmt-console → Deployments で `87ifb7tff`(着手前の本番)を Promote to Production。またはコミット `95ad7c3` へ戻す(要・複数回許可)。
+
+本番URL(常に最新を指す): https://customer-console-jade.vercel.app

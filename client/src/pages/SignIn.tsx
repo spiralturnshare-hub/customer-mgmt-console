@@ -9,7 +9,7 @@
  *   → 現在は「メール送信 → 画面で確認コードを入力 → verifyOtp」の2ステップ。
  *   接続先: Supabase Auth(Green fhamrkmsxidxayaoexso)。verifyOtp は RLS を通らない。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { sendMagicLink, verifyOtpCode } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,24 +20,59 @@ import { toast } from 'sonner';
 const OTP_MIN_LEN = 4;
 const OTP_MAX_LEN = 10;
 
+// 確認コード送信後のクールダウン秒数。
+// Supabase Auth は同一メール宛の確認コード再送を約10秒間ブロックする
+// (ホスティング版の固定値。ダッシュボードで変更不可)。この手前でボタンを止め、
+// 英語のレート制限エラーではなく日本語の案内を出すための猶予。10秒に少し足した値。
+const RESEND_COOLDOWN_SEC = 12;
+
+// Supabase の「送信頻度オーバー」エラーか判定する。
+// HTTP 429、または "... after N seconds" という文言を持つエラーを対象にする。
+function isSendRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { status?: number; message?: string };
+  if (e.status === 429) return true;
+  return typeof e.message === 'string' && /after \d+ seconds?/i.test(e.message);
+}
+
 export default function SignIn() {
   const [step, setStep] = useState<'email' | 'code'>('email');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
+  // > 0 の間は再送不可(残り秒数)。1秒ごとに減算し 0 で解除。
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setInterval(() => setCooldown((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [cooldown]);
 
   const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !email.includes('@')) return;
+    if (cooldown > 0) {
+      // まだ Supabase の再送ブロック中。押しても失敗するので送らずに案内。
+      toast('確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。');
+      return;
+    }
     setLoading(true);
     try {
       await sendMagicLink(email.trim());
       setStep('code');
+      setCooldown(RESEND_COOLDOWN_SEC);
       toast.success('確認コードを送信しました');
     } catch (err) {
-      // 実際の失敗理由を出す(例: "Signups not allowed for otp" = 未登録メール)
-      const msg = err instanceof Error ? err.message : 'エラーが発生しました';
-      toast.error(`確認コードを送信できませんでした: ${msg}`);
+      if (isSendRateLimitError(err)) {
+        // 直前に送信済み(別タブ・別アプリ含む)。英語エラーは出さず日本語で待機を促す。
+        setCooldown(RESEND_COOLDOWN_SEC);
+        toast('確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。');
+      } else {
+        // それ以外は実際の失敗理由を出す(例: "Signups not allowed for otp" = 未登録メール)
+        const msg = err instanceof Error ? err.message : 'エラーが発生しました';
+        toast.error(`確認コードを送信できませんでした: ${msg}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -90,9 +125,18 @@ export default function SignIn() {
                 登録済みのメールアドレスに確認コードを送信します。
               </p>
             </div>
-            <Button type="submit" className="w-full" disabled={loading || !email.trim()}>
-              {loading ? '送信中...' : '確認コードを送信'}
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={loading || !email.trim() || cooldown > 0}
+            >
+              {loading ? '送信中...' : cooldown > 0 ? '送信しました' : '確認コードを送信'}
             </Button>
+            {cooldown > 0 && (
+              <p className="text-xs text-muted-foreground text-center">
+                確認コードを送信しました。もう一度送信する場合は10秒ほどお待ちください。
+              </p>
+            )}
           </form>
         ) : (
           <form onSubmit={handleVerify} className="rounded-lg border border-border bg-card p-6 space-y-4">
