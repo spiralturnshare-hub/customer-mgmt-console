@@ -192,3 +192,12 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 戻し方: Vercel → customer-mgmt-console → Deployments で `cjesiy8jj`(着手前の本番)を Promote to Production。またはこのコミットのみ `git revert`。
 
 本番URL(常に最新を指す): https://customer-console-jade.vercel.app
+
+---
+
+## 2026-09-04: Legacy anon JWT → 新 publishable キー(docs/35 WS-B / docs/36)
+
+- 変更前 HEAD: `b3923f7` / Vercel Production: https://customer-console-jade.vercel.app
+- `client/src/lib/supabase.ts`: ハードコード fallback(旧 anon JWT)撤去 → env 必須(未設定なら throw)
+- Vercel env `VITE_SUPABASE_ANON_KEY` を `sb_publishable_...` に差し替え済み(Production ほか)
+- 巻き戻し: この commit を revert + Vercel env を旧 anon JWT に戻す
