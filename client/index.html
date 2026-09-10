@@ -10,6 +10,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet" />
+    <!-- Cloudflare Turnstile: Green Supabase Auth の captcha protection(2026-09-10 有効化)により
+         メールOTP送信に captchaToken が必須。window.turnstile を提供する。詳細 src/components/Turnstile.tsx -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   </head>
 
   <body>

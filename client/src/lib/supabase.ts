@@ -327,14 +327,17 @@ export async function fetchAllUploadFilesIncludingHistory(uploadId: string): Pro
 //      (未指定=true だと任意のメールで auth ユーザーが増える=不正ログインの入口)。
 // ============================================================
 
-/** ステップ1: 入力メールへ確認コードを送信する(関数名は既存呼び出し互換のため据え置き)。 */
-export async function sendMagicLink(email: string): Promise<void> {
+/** ステップ1: 入力メールへ確認コードを送信する(関数名は既存呼び出し互換のため据え置き)。
+ *  captchaToken: Green Supabase Auth の captcha protection(2026-09-10 有効化)により必須。
+ *    SignIn の Cloudflare Turnstile ウィジェットから受け取る。 */
+export async function sendMagicLink(email: string, captchaToken?: string | null): Promise<void> {
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
       shouldCreateUser: false,
       // コード入力方式では未使用。メール内リンクを踏まれた場合の戻り先として保険で残す。
       emailRedirectTo: `${window.location.origin}/`,
+      ...(captchaToken ? { captchaToken } : {}),
     },
   });
   if (error) throw error;
