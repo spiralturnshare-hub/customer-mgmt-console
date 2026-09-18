@@ -105,6 +105,125 @@ export async function fetchUploadById(id: string): Promise<UploadRecord | null> 
 }
 
 /**
+ * 顧客詳細画面の「決済情報」ブロック用: 注文(orders)と決済(stripe_payments)を
+ * order_id からまとめて取得する。
+ * - orders: 注文フォームで入力された氏名・メール・電話・商品明細・金額(既存列)。
+ * - stripe_payments: Stripe Checkout時点の氏名・メール・電話・住所(checkout_*。
+ *   dealer-mgmt-console CP31・migration 048で追加)+ 決済ステータス・金額・各種ID。
+ * カード会社・下4桁は現行のWebhookデータに含まれないため未収録(別タスク)。
+ * stripe_payments の読み取りは migration 047 で hq_has_perm('customer','view') に
+ * 許可済み(このアプリのHQスタッフアカウントであれば読める)。
+ */
+export interface OrderPaymentInfo {
+  order: {
+    id: string;
+    customerName: string | null;
+    customerEmail: string | null;
+    customerPhone: string | null;
+    insole1Kind: string | null;
+    insole2Kind: string | null;
+    priceInsole1: number | null;
+    priceInsole2: number | null;
+    priceRoomShoes: number | null;
+    roomShoes: boolean | null;
+    totalAmount: number | null;
+    discountAmount: number | null;
+    couponCode: string | null;
+  } | null;
+  payment: {
+    id: string;
+    amountTotal: number | null;
+    amountPaid: number | null;
+    currency: string | null;
+    paymentStatus: string | null;
+    paidAt: string | null;
+    stripeCustomerId: string | null;
+    stripePaymentIntentId: string | null;
+    stripeCheckoutSessionId: string | null;
+    stripeSubscriptionId: string | null;
+    checkoutName: string | null;
+    checkoutEmail: string | null;
+    checkoutPhone: string | null;
+    checkoutAddress: {
+      line1?: string | null;
+      line2?: string | null;
+      city?: string | null;
+      state?: string | null;
+      postal_code?: string | null;
+      country?: string | null;
+    } | null;
+  } | null;
+}
+
+export async function fetchOrderPaymentInfo(orderId: string): Promise<OrderPaymentInfo> {
+  const [orderRes, paymentRes] = await Promise.all([
+    supabase
+      .from('orders')
+      .select(
+        `id, customer_last_name, customer_first_name, customer_email, customer_phone,
+         insole1_kind, insole2_kind, price_insole1, price_insole2, price_room_shoes,
+         room_shoes, total_amount, discount_amount, coupon_code`
+      )
+      .eq('id', orderId)
+      .maybeSingle(),
+    supabase
+      .from('stripe_payments')
+      .select(
+        `id, amount_total, amount_paid, currency, payment_status, paid_at,
+         stripe_customer_id, stripe_payment_intent_id, stripe_checkout_session_id, stripe_subscription_id,
+         checkout_name, checkout_email, checkout_phone, checkout_address`
+      )
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (orderRes.error) throw orderRes.error;
+  if (paymentRes.error) throw paymentRes.error;
+
+  const o = orderRes.data;
+  const p = paymentRes.data;
+
+  return {
+    order: o
+      ? {
+          id: o.id,
+          customerName: [o.customer_last_name, o.customer_first_name].filter(Boolean).join(' ') || null,
+          customerEmail: o.customer_email ?? null,
+          customerPhone: o.customer_phone ?? null,
+          insole1Kind: o.insole1_kind ?? null,
+          insole2Kind: o.insole2_kind ?? null,
+          priceInsole1: o.price_insole1 ?? null,
+          priceInsole2: o.price_insole2 ?? null,
+          priceRoomShoes: o.price_room_shoes ?? null,
+          roomShoes: o.room_shoes ?? null,
+          totalAmount: o.total_amount ?? null,
+          discountAmount: o.discount_amount ?? null,
+          couponCode: o.coupon_code ?? null,
+        }
+      : null,
+    payment: p
+      ? {
+          id: p.id,
+          amountTotal: p.amount_total ?? null,
+          amountPaid: p.amount_paid ?? null,
+          currency: p.currency ?? null,
+          paymentStatus: p.payment_status ?? null,
+          paidAt: p.paid_at ?? null,
+          stripeCustomerId: p.stripe_customer_id ?? null,
+          stripePaymentIntentId: p.stripe_payment_intent_id ?? null,
+          stripeCheckoutSessionId: p.stripe_checkout_session_id ?? null,
+          stripeSubscriptionId: p.stripe_subscription_id ?? null,
+          checkoutName: p.checkout_name ?? null,
+          checkoutEmail: p.checkout_email ?? null,
+          checkoutPhone: p.checkout_phone ?? null,
+          checkoutAddress: p.checkout_address ?? null,
+        }
+      : null,
+  };
+}
+
+/**
  * 作製中一覧用: 複数の order_id について「注文番号(order_name)」と
  * 「発注日(= 決済完了日時)」をまとめて取得する。
  *

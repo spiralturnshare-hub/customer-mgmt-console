@@ -36,6 +36,8 @@ import {
   fetchCurrentMemberFull,
   canViewCustomerSection,
   canViewDomain,
+  fetchOrderPaymentInfo,
+  type OrderPaymentInfo,
   type UploadRecord,
   type UploadFileRecord,
   type ProductionWorkflow,
@@ -75,6 +77,42 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
       <span className="text-gray-700 break-all">{value || "—"}</span>
     </div>
   );
+}
+
+// インソール種別コード → 日本語名(dealer-mgmt-console CommissionDetailPage と表記を揃える)
+const INSOLE_KIND_LABELS: Record<string, string> = {
+  walk: '歩き用',
+  walk_thin: '歩き用極薄ハーフ',
+  beauty: 'ビューティー用',
+  room: 'ルーム用',
+  sports: 'スポーツ用',
+  maternity: 'マタニティ用',
+  kids: 'Kids用',
+};
+function insoleKindLabel(kind: string | null): string {
+  if (!kind) return '—';
+  return INSOLE_KIND_LABELS[kind] ?? kind;
+}
+
+// Stripe Checkout の checkout_address(jsonb)を1行の住所表記に整形
+interface CheckoutAddress {
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+}
+function formatCheckoutAddress(addr: CheckoutAddress | null | undefined): string | null {
+  if (!addr) return null;
+  const parts = [addr.postal_code && `〒${addr.postal_code}`, addr.country, addr.state, addr.city, addr.line1, addr.line2]
+    .filter((v): v is string => !!v);
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
+function formatYen(amount: number | null | undefined): string {
+  if (amount == null) return '—';
+  return `¥${amount.toLocaleString('ja-JP')}`;
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -1061,6 +1099,17 @@ export default function CustomerDetail() {
     fetchCurrentMember(user.id).then((m) => setMemberId(m?.id ?? null));
   }, [user]);
 
+  // 決済情報(注文・Stripe決済の詳細)。upload.order_id が分かってから取得する。
+  const [paymentInfo, setPaymentInfo] = useState<OrderPaymentInfo | null>(null);
+  useEffect(() => {
+    if (!upload?.order_id) { setPaymentInfo(null); return; }
+    let cancelled = false;
+    fetchOrderPaymentInfo(upload.order_id)
+      .then((info) => { if (!cancelled) setPaymentInfo(info); })
+      .catch((e) => { console.error('決済情報取得エラー:', e); if (!cancelled) setPaymentInfo(null); });
+    return () => { cancelled = true; };
+  }, [upload?.order_id]);
+
   async function handleToggleStep(step: WorkflowStep, nextDone: boolean) {
     if (!id) return;
     setPendingStep(step);
@@ -1308,6 +1357,77 @@ export default function CustomerDetail() {
                 <InfoRow label="ルームカラー" value={upload.room_color} />
               </div>
             </div>
+          </Card>
+        )}
+
+        {/* ── 決済情報ブロック(誰が・いつ・何を購入したか + Stripe決済詳細。
+              2026-09-18 冨永社長指示: Stripe/Supabase/管理コンソールを個別に見て回る
+              手間を無くすため、決済情報をこの画面に集約する。
+              カード会社・下4桁は現行のWebhookデータに含まれないため未収録(別タスク)。
+              決済時入力のメール・電話・住所は社内確認専用のためPDF等の帳票には出さないこと。 ── */}
+        {canViewCustomerSection(currentMember, 'order_info') && upload.order_id && (
+          <Card className="mb-4">
+            <SectionTitle>決済情報</SectionTitle>
+            {!paymentInfo ? (
+              <p className="text-xs text-gray-400">読み込み中...</p>
+            ) : !paymentInfo.order && !paymentInfo.payment ? (
+              <p className="text-xs text-gray-400">この注文の決済情報は見つかりませんでした。</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>注文フォーム入力</p>
+                  <InfoRow label="お名前" value={paymentInfo.order?.customerName} />
+                  <InfoRow label="メール" value={paymentInfo.order?.customerEmail} />
+                  <InfoRow label="電話番号" value={paymentInfo.order?.customerPhone} />
+                  <InfoRow
+                    label="商品(1足目)"
+                    value={paymentInfo.order?.insole1Kind
+                      ? `${insoleKindLabel(paymentInfo.order.insole1Kind)} ${formatYen(paymentInfo.order.priceInsole1)}`
+                      : null}
+                  />
+                  {paymentInfo.order?.insole2Kind && (
+                    <InfoRow
+                      label="商品(2足目)"
+                      value={`${insoleKindLabel(paymentInfo.order.insole2Kind)} ${formatYen(paymentInfo.order.priceInsole2)}`}
+                    />
+                  )}
+                  {paymentInfo.order?.roomShoes && (
+                    <InfoRow label="ルームシューズ" value={formatYen(paymentInfo.order.priceRoomShoes)} />
+                  )}
+                  <InfoRow label="クーポン" value={paymentInfo.order?.couponCode} />
+                  <InfoRow
+                    label="合計 / 割引"
+                    value={paymentInfo.order
+                      ? `${formatYen(paymentInfo.order.totalAmount)} / -${formatYen(paymentInfo.order.discountAmount)}`
+                      : null}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold mb-2" style={{ color: "#555" }}>Stripe決済</p>
+                  <InfoRow label="決済ステータス" value={paymentInfo.payment?.paymentStatus} />
+                  <InfoRow
+                    label="決済日時"
+                    value={paymentInfo.payment?.paidAt ? new Date(paymentInfo.payment.paidAt).toLocaleString('ja-JP') : null}
+                  />
+                  <InfoRow
+                    label="決済金額(総額/入金額)"
+                    value={paymentInfo.payment
+                      ? `${formatYen(paymentInfo.payment.amountTotal)} / ${formatYen(paymentInfo.payment.amountPaid)}${paymentInfo.payment.currency ? ` (${paymentInfo.payment.currency.toUpperCase()})` : ''}`
+                      : null}
+                  />
+                  <InfoRow label="決済時入力のお名前" value={paymentInfo.payment?.checkoutName} />
+                  <InfoRow label="決済時入力のメール" value={paymentInfo.payment?.checkoutEmail} />
+                  <InfoRow label="決済時入力の電話番号" value={paymentInfo.payment?.checkoutPhone} />
+                  <InfoRow label="決済時入力の住所" value={formatCheckoutAddress(paymentInfo.payment?.checkoutAddress)} />
+                  <InfoRow label="Stripe Customer ID" value={paymentInfo.payment?.stripeCustomerId} />
+                  <InfoRow label="Stripe Payment Intent ID" value={paymentInfo.payment?.stripePaymentIntentId} />
+                  <InfoRow label="Stripe Checkout Session ID" value={paymentInfo.payment?.stripeCheckoutSessionId} />
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-3">
+              カード会社・下4桁はまだ記録していません(現行のWebhookデータには含まれないため。別途対応予定)。
+            </p>
           </Card>
         )}
 

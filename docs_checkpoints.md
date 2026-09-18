@@ -245,3 +245,13 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - DB/RLSへの影響: なし(既存RPC・テーブルは無変更。呼び出し方のみ変更)。
 - ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(1716 modules)。
 - 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `25cea98` 時点の本番デプロイを Promote to Production。
+
+## 2026-09-18(続き・別セッション): 顧客詳細に「決済情報」ブロックを新設(dealer-mgmt-console CP27〜31 の続き)
+
+- 変更前 HEAD: `887e668` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: dealer-mgmt-console のコミッション画面に決済詳細パネルを作った際(CP27〜31。migration 045〜048)、冨永社長より「顧客が何を・誰の名義で・いつ購入したかを、Stripe/Supabase/各管理コンソールを個別に見て回らずここで完結させたい」との指示。customer-mgmt-console はまだ未着手だったため、同じ設計(Supabaseの既存データを読むのみ・Stripeへのライブ呼び出しなし)でこちらにも追加。
+- 追加: `client/src/lib/supabase.ts` に `fetchOrderPaymentInfo(orderId)` を新設。`orders`(注文フォーム入力の氏名・メール・電話・商品明細・金額)と `stripe_payments`(Stripe Checkout時点の氏名・メール・電話・住所=`checkout_*`。migration 048で追加/決済ステータス・金額・各種ID)を `order_id` でまとめて取得する。`client/src/pages/CustomerDetail.tsx` の「注文・アップロード情報」ブロック直後に新規カード「決済情報」を追加(`canViewCustomerSection(currentMember, 'order_info')`で出し分け・既存の権限キーを再利用)。
+- **カード会社・下4桁は今回もスコープ外**(現行のStripe Webhookデータ=Checkout Sessionオブジェクトには含まれない。取得には決済完了Makeシナリオへの構造変更=新規モジュール追加が必要で、別タスクとして慎重に進める)。
+- 前提: `stripe_payments` の読み取りは spiralturn-green-integration の Green migration 047(`hq_has_perm('customer','view')`のRLSポリシー追加)で許可済み。本アプリ側の追加DB変更は無し(既存の`orders`/`stripe_payments`スキーマをそのまま読むだけ)。
+- ビルド: `npx tsc --noEmit`(変更前後ともエラー0件・stashで比較確認済み)/ `npx vite build` 成功(1716 modules)。
+- 戻し方: `git checkout -- client/src/lib/supabase.ts client/src/pages/CustomerDetail.tsx`(DB変更が無いためこれのみで完全に戻る)。
