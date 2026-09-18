@@ -375,7 +375,7 @@ export async function fetchCurrentMember(authUserId: string): Promise<{ id: stri
   return data as { id: string; name: string };
 }
 
-async function fetchMemberNames(memberIds: string[]): Promise<Record<string, string>> {
+export async function fetchMemberNames(memberIds: string[]): Promise<Record<string, string>> {
   const ids = Array.from(new Set(memberIds.filter(Boolean)));
   if (ids.length === 0) return {};
   const { data, error } = await supabase

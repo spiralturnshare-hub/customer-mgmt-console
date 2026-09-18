@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
-import { ArrowLeft, Check, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, History, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   fetchAnalysisSigns,
@@ -17,9 +17,16 @@ import {
   saveDetectedSigns,
   completeFootAnalysis,
   fetchCurrentMember,
+  fetchMemberNameById,
+  fetchAnalysisRevisions,
   ensureProductionWorkflow,
+  toggleWorkflowStep,
   type AnalysisSign,
+  type AnalysisRevision,
 } from "@/lib/supabase";
+
+// 左右/両側の表示ラベル(CustomerDetail.tsxの動作分析結果カードと同じ対応)
+const SIDE_LABEL: Record<string, string> = { left: "左", right: "右", both: "両側" };
 import { useAuth } from "@/contexts/AuthContext";
 
 const PINK = "#D62598";
@@ -119,6 +126,41 @@ export default function GaitAnalysis() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 確定済みかどうかで「結果サマリー(既定)」と「編集フォーム」を出し分ける。
+  // 未完了(初回)は最初から編集フォームを出す。
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [editing, setEditing] = useState(true);
+  const [analyzedAt, setAnalyzedAt] = useState<string | null>(null);
+  const [analystName, setAnalystName] = useState<string | null>(null);
+  const [revisions, setRevisions] = useState<AnalysisRevision[]>([]);
+  const [revisionNames, setRevisionNames] = useState<Record<string, string>>({});
+
+  // 分析結果(完了状態・分析者・履歴)を state へ反映する。初回ロードと確定後の再読込の両方から呼ぶ。
+  async function applyAnalysisMeta(analysis: { id: string; is_completed: boolean | null; analyzed_at: string | null; operator_member_id: string | null } | null) {
+    setIsCompleted(Boolean(analysis?.is_completed));
+    setEditing(!analysis?.is_completed);
+    setAnalyzedAt(analysis?.analyzed_at ?? null);
+    setAnalystName(analysis?.operator_member_id ? await fetchMemberNameById(analysis.operator_member_id) : null);
+    if (analysis?.id) {
+      const revs = await fetchAnalysisRevisions(analysis.id);
+      setRevisions(revs);
+      const staffIds = Array.from(
+        new Set(revs.filter((r) => r.changed_by_type === "staff" && r.changed_by_id).map((r) => r.changed_by_id as string))
+      );
+      const names: Record<string, string> = {};
+      await Promise.all(
+        staffIds.map(async (mid) => {
+          const n = await fetchMemberNameById(mid);
+          if (n) names[mid] = n;
+        })
+      );
+      setRevisionNames(names);
+    } else {
+      setRevisions([]);
+      setRevisionNames({});
+    }
+  }
+
   useEffect(() => {
     if (!uploadId) return;
     let cancelled = false;
@@ -149,6 +191,7 @@ export default function GaitAnalysis() {
           setFootAnalysisId(analysis.id);
         }
         setSelections(initial);
+        await applyAnalysisMeta(analysis);
       } catch (e) {
         if (!cancelled) setError("データの取得に失敗しました。");
       } finally {
@@ -173,6 +216,19 @@ export default function GaitAnalysis() {
     return Array.from(map.entries());
   }, [signs]);
 
+  // 確定済みの検出内容(結果サマリー表示用)。selections は保存済みの内容と同期している。
+  const detectedList = useMemo(() => {
+    const signByKey = new Map(signs.map((s) => [s.key, s]));
+    return Object.entries(selections)
+      .filter(([, side]) => side)
+      .map(([key, side]) => {
+        const sign = signByKey.get(key);
+        if (!sign) return null;
+        return { title: sign.title, sideLabel: SIDE_LABEL[side as string] ?? side };
+      })
+      .filter((v): v is { title: string; sideLabel: string } => v !== null);
+  }, [signs, selections]);
+
   async function persist(next: Record<string, Side | null>, markCompleted: boolean) {
     if (!uploadId || !productionId) return;
     setSaving(true);
@@ -183,9 +239,16 @@ export default function GaitAnalysis() {
       const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected, memberId);
       setFootAnalysisId(result.id);
       if (markCompleted) {
-        await completeFootAnalysis(result.id, memberId);
+        const completed = await completeFootAnalysis(result.id, memberId);
+        // 作製中一覧の「分析」チェックを、確定と連動して自動でONにする(担当者・日時も記録)。
+        // 失敗しても分析結果自体の確定は成立しているため、ここは握りつぶしてログのみ残す。
+        try {
+          await toggleWorkflowStep(uploadId, orderId, "analy", true, memberId);
+        } catch (e2) {
+          console.error("toggleWorkflowStep(analy) failed:", e2);
+        }
+        await applyAnalysisMeta(completed);
         toast.success("動作分析を確定しました");
-        setLocation(`/customer/${uploadId}`);
       }
     } catch (e) {
       console.error("saveDetectedSigns failed:", e);
@@ -225,9 +288,6 @@ export default function GaitAnalysis() {
         </button>
 
         <h1 className="text-xl font-bold mb-1" style={{ color: "#1a1a1a" }}>動作分析</h1>
-        <p className="text-xs text-gray-400 mb-6">
-          歩行動画から検出された悪い兆候を、部位ごとにチェックしてください。
-        </p>
 
         {error && (
           <div className="bg-red-50 border border-red-300 rounded-xl p-3 mb-4 text-xs text-red-600">
@@ -235,49 +295,133 @@ export default function GaitAnalysis() {
           </div>
         )}
 
-        {signs.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-sm text-gray-400">
-            サインのマスタデータが未投入です。<br />
-            <code className="text-xs">supabase_migrations/001_analysis_signs_seed.sql</code> を実行してください。
-          </div>
-        ) : (
-          grouped.map(([region, regionSigns]) => (
-            <div key={region} className="mb-8">
-              <div className="text-center mb-4">
-                <div
-                  className="w-16 h-16 rounded-full mx-auto mb-2"
-                  style={{ backgroundColor: "#e0e0e0", border: `2px solid ${PINK}55` }}
-                />
-                <p className="text-sm font-bold text-gray-600">— {region} —</p>
-              </div>
-              {regionSigns.map((s) => (
-                <div key={s.key} className="bg-white rounded-xl border border-gray-200 p-4 mb-3">
-                  {s.header && (
-                    <p className="text-xs font-bold mb-0.5" style={{ color: PINK }}>{s.header}</p>
-                  )}
-                  <p className="text-sm font-bold mb-0.5" style={{ color: "#1a1a1a" }}>{s.title}</p>
-                  {s.p_measure && <p className="text-xs text-gray-400 mb-3">{s.p_measure}</p>}
-                  <SideButtons
-                    sign={s}
-                    selected={selections[s.key] ?? null}
-                    onSelect={(side) => handleSelect(s.key, side)}
-                  />
-                </div>
-              ))}
+        {!editing ? (
+          <>
+            <div className="flex items-center gap-2 mb-4">
+              <span
+                className="text-[10px] font-bold px-2 py-1 rounded-md"
+                style={{ color: "#1a9e5c", backgroundColor: "#1a9e5c15" }}
+              >
+                確定済み
+              </span>
+              <span className="text-xs text-gray-400">
+                {analystName ?? "分析者不明"}
+                {analyzedAt && ` ・ ${new Date(analyzedAt).toLocaleString("ja-JP")}`}
+              </span>
             </div>
-          ))
-        )}
 
-        {signs.length > 0 && (
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => persist(selections, true)}
-            className="w-full h-12 rounded-xl font-bold text-white transition-colors disabled:opacity-60"
-            style={{ backgroundColor: PINK }}
-          >
-            {saving ? "保存中..." : "確認（分析を確定する）"}
-          </button>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+              <p className="text-sm font-bold mb-3" style={{ color: "#1a1a1a" }}>検出された悪い兆候</p>
+              {detectedList.length === 0 ? (
+                <p className="text-xs text-gray-400">該当する兆候は検出されませんでした。</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                  {detectedList.map((d, i) => (
+                    <div key={i} className="flex justify-between text-xs border-b pb-1" style={{ borderColor: "#f0f0f0" }}>
+                      <span className="text-gray-500">{d.title}</span>
+                      <span className="font-semibold" style={{ color: PINK }}>{d.sideLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="w-full h-11 rounded-xl font-bold text-white transition-colors mb-6"
+              style={{ backgroundColor: PINK }}
+            >
+              分析結果を修正する
+            </button>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-bold mb-2 flex items-center gap-1.5" style={{ color: "#1a1a1a" }}>
+                <History size={13} className="text-gray-400" />
+                変更履歴(責任の所在ログ)
+              </p>
+              {revisions.length === 0 ? (
+                <p className="text-xs text-gray-400">変更履歴はまだありません。</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {revisions.map((r) => (
+                    <div key={r.id} className="flex items-center justify-between text-[11px] border-b pb-1" style={{ borderColor: "#f5f5f5" }}>
+                      <span className="text-gray-500">
+                        #{r.revision_number}{" "}
+                        {r.changed_by_id && revisionNames[r.changed_by_id] ? revisionNames[r.changed_by_id] : "スタッフ"}
+                        {r.change_reason && <span className="text-gray-400">({r.change_reason})</span>}
+                      </span>
+                      <span className="text-gray-400 whitespace-nowrap">
+                        {new Date(r.created_at).toLocaleString("ja-JP")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-gray-400 mb-6">
+              歩行動画から検出された悪い兆候を、部位ごとにチェックしてください。
+            </p>
+
+            {signs.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 p-6 text-center text-sm text-gray-400">
+                サインのマスタデータが未投入です。<br />
+                <code className="text-xs">supabase_migrations/001_analysis_signs_seed.sql</code> を実行してください。
+              </div>
+            ) : (
+              grouped.map(([region, regionSigns]) => (
+                <div key={region} className="mb-8">
+                  <div className="text-center mb-4">
+                    <div
+                      className="w-16 h-16 rounded-full mx-auto mb-2"
+                      style={{ backgroundColor: "#e0e0e0", border: `2px solid ${PINK}55` }}
+                    />
+                    <p className="text-sm font-bold text-gray-600">— {region} —</p>
+                  </div>
+                  {regionSigns.map((s) => (
+                    <div key={s.key} className="bg-white rounded-xl border border-gray-200 p-4 mb-3">
+                      {s.header && (
+                        <p className="text-xs font-bold mb-0.5" style={{ color: PINK }}>{s.header}</p>
+                      )}
+                      <p className="text-sm font-bold mb-0.5" style={{ color: "#1a1a1a" }}>{s.title}</p>
+                      {s.p_measure && <p className="text-xs text-gray-400 mb-3">{s.p_measure}</p>}
+                      <SideButtons
+                        sign={s}
+                        selected={selections[s.key] ?? null}
+                        onSelect={(side) => handleSelect(s.key, side)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+
+            {signs.length > 0 && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => persist(selections, true)}
+                className="w-full h-12 rounded-xl font-bold text-white transition-colors disabled:opacity-60"
+                style={{ backgroundColor: PINK }}
+              >
+                {saving ? "保存中..." : isCompleted ? "確認(修正内容を確定する)" : "確認(分析を確定する)"}
+              </button>
+            )}
+            {isCompleted && (
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+                className="w-full h-10 rounded-xl font-bold mt-2 disabled:opacity-60"
+                style={{ color: PINK, border: `1px solid ${PINK}55`, backgroundColor: "#fff" }}
+              >
+                結果サマリーに戻る(保存しない)
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

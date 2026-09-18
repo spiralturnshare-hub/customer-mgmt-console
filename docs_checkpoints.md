@@ -220,3 +220,17 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - DB/RLSへの影響: なし(フロントエンドのみ)。
 - ビルド: `npx tsc --noEmit`(リポジトリ直下で実行。`vite.config.ts`がルート直下にあるため`client/`で実行すると alias 解決に失敗する点に注意)= エラー0件 / `npx vite build` = 成功(1716 modules)。
 - 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `315e635` 時点の本番デプロイを Promote to Production。
+
+## 2026-09-18: 動作分析画面を「確定後は結果サマリー表示・修正は明示ボタン経由」に作り直し + 責任の所在(分析者・日時)を全画面に表示
+
+- 変更前 HEAD: `7cac13b` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: 上記の直前コミットで確定後にトースト+顧客詳細への遷移を追加したが、冨永社長から実機確認で「以前指示した仕様が反映されていない」と再指摘。過去の指示(`docs/07-gait-analysis-and-workflow-ui.md` §1「UI配置の設計思想」)が原本として残っており、①確定後は同画面に結果一覧を表示する②再度開いたときも要約を先に見せ、「修正する」ボタンを押した時だけ編集フォームに入る③誰が・いつ分析したかを常に明示する、という仕様が`GaitAnalysis.tsx`未実装だった。[[顧客データ改訂ポリシー]](Bacon_Brain)に恒久仕様として明文化した上で実装。
+- 修正:
+  - `client/src/pages/GaitAnalysis.tsx`: `editing`(サマリー/編集の出し分け)・`analystName`・`revisions`のstateを追加。確定済みなら既定でサマリー(検出リスト+分析者+確定日時+変更履歴)を表示し「分析結果を修正する」ボタンでのみ編集フォームへ。確定成功時に前コミットの`setLocation`遷移を廃止し、代わりに同画面でサマリー表示へ切替 + `toggleWorkflowStep(uploadId, orderId, 'analy', true, memberId)`を呼び`production_workflows.analy_done/analy_at/analy_by`を自動更新(計測=foot-measureの`measure_done`連携と同じパターン)。
+  - `client/src/pages/Home.tsx`(作製中一覧): `fetchMemberNames`を一括呼び出しし(N+1回避)、「分析」チェックボックスの直下に担当者名+日時を表示。`handleToggle`で手動トグル時も担当者名を追加解決。
+  - `client/src/pages/CustomerDetail.tsx`: 動作分析結果カードに分析者名を追加表示。`RevisionHistorySection`の担当者バッジを「スタッフ」固定表示から実名表示(`memberNames`props追加)に変更(動作分析の変更履歴のみ対象。計測の変更履歴は今回スコープ外・未対応)。
+  - `client/src/lib/supabase.ts`: `fetchMemberNames`を`export`化(Home.tsx/CustomerDetail.tsxから再利用するため)。
+- DB/RLSへの影響: なし(migration不要。既存カラム`production_workflows.analy_*`・`foot_analyses.operator_member_id`/`analyzed_at`・`foot_analysis_revisions`を読み書きするのみ)。
+- ビルド: `npx tsc --noEmit`(リポジトリ直下)= エラー0件 / `npx vite build` = 成功(1716 modules)。
+- 既知の残課題(今回スコープ外・次回検討): 計測(foot-measure)側の変更履歴・作製中一覧表示にも同じ「担当者名が出ない」問題が残っている可能性が高い。
+- 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `7cac13b` 時点の本番デプロイを Promote to Production。

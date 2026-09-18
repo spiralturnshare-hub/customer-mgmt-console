@@ -31,6 +31,8 @@ import {
   fetchMeasurementByUploadId,
   fetchMeasurementRevisions,
   fetchAnalysisRevisions,
+  fetchMemberNameById,
+  fetchMemberNames,
   fetchCurrentMemberFull,
   canViewCustomerSection,
   canViewDomain,
@@ -428,6 +430,7 @@ const SIDE_LABEL: Record<string, string> = { left: '左', right: '右', both: '�
 
 function AnalysisResultSection({
   analysis,
+  analystName,
   signs,
   onEdit,
   emailInput,
@@ -436,8 +439,10 @@ function AnalysisResultSection({
   sending,
   sentMsg,
   revisions,
+  memberNames,
 }: {
   analysis: FootAnalysis | null;
+  analystName: string | null;
   signs: AnalysisSign[];
   onEdit: () => void;
   emailInput: string;
@@ -446,6 +451,7 @@ function AnalysisResultSection({
   sending: boolean;
   sentMsg: string | null;
   revisions: AnalysisRevision[];
+  memberNames: Record<string, string>;
 }) {
   const signByKey = new Map(signs.map((s) => [s.key, s]));
   const detected = (analysis?.detected_signs ?? [])
@@ -474,7 +480,7 @@ function AnalysisResultSection({
       </div>
       {analysis?.analyzed_at && (
         <p className="text-[10px] text-gray-400 mb-3">
-          最終更新: {new Date(analysis.analyzed_at).toLocaleString('ja-JP')}
+          分析者: {analystName ?? '不明'} ・ 最終更新: {new Date(analysis.analyzed_at).toLocaleString('ja-JP')}
         </p>
       )}
       {detected.length === 0 ? (
@@ -527,7 +533,7 @@ function AnalysisResultSection({
         </p>
       </div>
     </Card>
-    <RevisionHistorySection revisions={revisions} title="動作分析データの変更履歴" />
+    <RevisionHistorySection revisions={revisions} title="動作分析データの変更履歴" memberNames={memberNames} />
     </>
   );
 }
@@ -896,9 +902,11 @@ interface RevisionLike {
 function RevisionHistorySection({
   revisions,
   title = "変更履歴(データ改訂ログ)",
+  memberNames = {},
 }: {
-  revisions: RevisionLike[];
+  revisions: (RevisionLike & { changed_by_id?: string | null })[];
   title?: string;
+  memberNames?: Record<string, string>;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   return (
@@ -924,7 +932,9 @@ function RevisionHistorySection({
                       backgroundColor: r.changed_by_type === "customer" ? "#1a7fb818" : `${PINK}15`,
                     }}
                   >
-                    {r.changed_by_type === "customer" ? "顧客" : "スタッフ"}
+                    {r.changed_by_type === "customer"
+                      ? "顧客"
+                      : (r.changed_by_id && memberNames[r.changed_by_id]) || "スタッフ(不明)"}
                   </span>
                   {r.change_reason && <span className="text-gray-400">{r.change_reason}</span>}
                 </span>
@@ -979,6 +989,10 @@ export default function CustomerDetail() {
   const [measurement, setMeasurement] = useState<FootMeasurementRow | null>(null);
   const [measurementRevisions, setMeasurementRevisions] = useState<MeasurementRevision[]>([]);
 
+  // 動作分析・計測の変更履歴に出す担当者名(system_members.id → 氏名)と、分析結果カードに出す分析者名。
+  const [revisionMemberNames, setRevisionMemberNames] = useState<Record<string, string>>({});
+  const [analysisAnalystName, setAnalysisAnalystName] = useState<string | null>(null);
+
   // 権限管理(2026-08-27新設): 表示制御用にログイン中メンバーの権限情報をフル取得する。
   // 既存のmemberId(保存処理で使用)とは別のstateとして保持する。
   const [currentMember, setCurrentMember] = useState<SystemMember | null>(null);
@@ -1019,6 +1033,19 @@ export default function CustomerDetail() {
           setMeasurement(footMeasurement);
           setMeasurementRevisions(measurementRevs);
           setCurrentMember(member);
+
+          // 責任の所在: 変更履歴の担当者名 + 動作分析結果カードの分析者名を一括解決。
+          const staffIds = Array.from(
+            new Set(
+              [...analysisRevs, ...measurementRevs]
+                .filter((r) => r.changed_by_type === 'staff' && r.changed_by_id)
+                .map((r) => r.changed_by_id as string)
+            )
+          );
+          fetchMemberNames(staffIds).then((names) => { if (!cancelled) setRevisionMemberNames(names); });
+          setAnalysisAnalystName(
+            footAnalysis?.operator_member_id ? await fetchMemberNameById(footAnalysis.operator_member_id) : null
+          );
         }
       } catch (e) {
         if (!cancelled) setError('データの取得に失敗しました。');
@@ -1447,6 +1474,7 @@ export default function CustomerDetail() {
         {canViewDomain(currentMember, 'perm_analysis') && (
           <AnalysisResultSection
             analysis={analysis}
+            analystName={analysisAnalystName}
             signs={analysisSigns}
             onEdit={() => setLocation(`/customer/${id}/analysis`)}
             emailInput={analysisEmailInput}
@@ -1455,6 +1483,7 @@ export default function CustomerDetail() {
             sending={sendingAnalysisEmail}
             sentMsg={analysisEmailSentMsg}
             revisions={analysisRevisions}
+            memberNames={revisionMemberNames}
           />
         )}
 

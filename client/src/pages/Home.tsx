@@ -28,6 +28,7 @@ import {
   fetchCurrentMember,
   fetchCurrentMemberFull,
   fetchOrderMetaByIds,
+  fetchMemberNames,
   canViewCustomerNameInList,
   signOut,
   type UploadRecord,
@@ -95,6 +96,7 @@ const COLUMNS: { label: string; step: WorkflowStep }[] = [
 
 function ProgressTable({
   workflow,
+  analyName,
   pendingStep,
   onToggle,
   onOpenMeasure,
@@ -105,6 +107,7 @@ function ProgressTable({
   savingTracking,
 }: {
   workflow: ProductionWorkflow | null;
+  analyName: string | null;
   pendingStep: WorkflowStep | null;
   onToggle: (step: WorkflowStep, nextDone: boolean) => void;
   onOpenMeasure: () => void;
@@ -180,6 +183,13 @@ function ProgressTable({
                       </button>
                     )}
                   </div>
+                  {/* 責任の所在: 分析完了の担当者・日時をチェックボックスの近くに表示(2026-08-25仕様・docs/07) */}
+                  {col.step === "analy" && done && (
+                    <div className="text-[10px] text-gray-400 leading-tight mt-1 pl-6">
+                      {workflow?.analy_at && new Date(workflow.analy_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      {analyName && <><br />{analyName}</>}
+                    </div>
+                  )}
                 </td>
               );
             })}
@@ -222,6 +232,7 @@ function CustomerCard({
   customer,
   showName,
   workflow,
+  analyName,
   measurement,
   pendingStep,
   onToggle,
@@ -233,6 +244,7 @@ function CustomerCard({
   customer: Customer;
   showName: boolean;
   workflow: ProductionWorkflow | null;
+  analyName: string | null;
   measurement: FootMeasurementRow | null;
   pendingStep: WorkflowStep | null;
   onToggle: (cid: string, step: WorkflowStep, nextDone: boolean) => void;
@@ -316,6 +328,7 @@ function CustomerCard({
       </div>
       <ProgressTable
         workflow={workflow}
+        analyName={analyName}
         pendingStep={pendingStep}
         onToggle={(step, nextDone) => onToggle(customer.id, step, nextDone)}
         onOpenMeasure={handleOpenMeasure}
@@ -335,6 +348,8 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [workflows, setWorkflows] = useState<Map<string, ProductionWorkflow>>(new Map());
+  // 分析担当者名(system_members.id → 氏名)。責任の所在を「分析」チェックボックスの近くに出すため。
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const [measurements, setMeasurements] = useState<Map<string, FootMeasurementRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +389,11 @@ export default function Home() {
       setTrackingInputs(
         Object.fromEntries(mapped.map((c) => [c.id, wfMap.get(c.id)?.tracking_number ?? '']))
       );
+      // 分析担当者名を一括解決(N+1回避)。今後measure_by等にも同様に使える。
+      const analyIds = Array.from(wfMap.values())
+        .map((wf) => wf.analy_by)
+        .filter((v): v is string => Boolean(v));
+      setMemberNames(await fetchMemberNames(analyIds));
     } catch (e) {
       console.error('Failed to fetch uploads:', e);
       setError('データの取得に失敗しました。再読み込みしてください。');
@@ -404,6 +424,9 @@ export default function Home() {
       const customer = customers.find((c) => c.id === uploadId);
       const updated = await toggleWorkflowStep(uploadId, customer?.orderId ?? null, step, nextDone, memberId);
       setWorkflows((prev) => new Map(prev).set(uploadId, updated));
+      if (updated.analy_by && !memberNames[updated.analy_by]) {
+        fetchMemberNames([updated.analy_by]).then((names) => setMemberNames((prev) => ({ ...prev, ...names })));
+      }
     } catch (e) {
       // 失敗時は表示を変更せず据え置く
     } finally {
@@ -556,6 +579,10 @@ export default function Home() {
               customer={customer}
               showName={canSeeNames}
               workflow={workflows.get(customer.id) ?? null}
+              analyName={(() => {
+                const by = workflows.get(customer.id)?.analy_by;
+                return by ? memberNames[by] ?? null : null;
+              })()}
               measurement={measurements.get(customer.id) ?? null}
               pendingStep={pendingStep}
               onToggle={handleToggle}
