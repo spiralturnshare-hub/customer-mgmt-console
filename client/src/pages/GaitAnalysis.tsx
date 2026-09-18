@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { ArrowLeft, Check, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import {
   fetchAnalysisSigns,
   fetchFootAnalysisByUploadId,
@@ -183,6 +184,8 @@ export default function GaitAnalysis() {
       setFootAnalysisId(result.id);
       if (markCompleted) {
         await completeFootAnalysis(result.id, memberId);
+        toast.success("動作分析を確定しました");
+        setLocation(`/customer/${uploadId}`);
       }
     } catch (e) {
       console.error("saveDetectedSigns failed:", e);

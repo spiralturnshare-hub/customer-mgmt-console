@@ -211,3 +211,12 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 前提: Cloudflare Turnstile ウィジェット `upload-center` の Hostname に `customer-console-jade.vercel.app` を追加済み(冨永社長・2026-09-11)。
 - ビルド: `npx vite build` 成功。コミット: `417432a`(+ env 反映のため空コミット `8f55cb5`)。
 - 戻し方: 2コミットを revert + Vercel env 削除。captcha protection が ON の間はログイン不能に戻る点に注意。
+
+## 2026-09-18: 動作分析「確認(分析を確定する)」ボタンが成功しても無反応な問題を修正
+
+- 変更前 HEAD: `315e635` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: M1 実機確認中、冨永社長が動作分析画面(`GaitAnalysis.tsx`)で全項目チェック後に「確認(分析を確定する)」を押しても画面が変わらず、確定できたか分からないと報告。コード確認の結果、左右ボタンのクリックごとに`saveDetectedSigns`(RPC `update_foot_analysis_with_history`)で即時自動保存されており、確定ボタンも保存自体は成功(`completeFootAnalysis`で`is_completed=true`等をセット)していたが、**成功時のトースト表示・画面遷移のコードが元々存在しなかった**(バグではなく未実装)。
+- 修正(`client/src/pages/GaitAnalysis.tsx`のみ): `sonner`から`toast`をimport。`persist(selections, true)`内、`completeFootAnalysis`成功後に`toast.success("動作分析を確定しました")` + `setLocation(`/customer/${uploadId}`)`(画面上部の「顧客詳細に戻る」と同じ遷移先)を追加。
+- DB/RLSへの影響: なし(フロントエンドのみ)。
+- ビルド: `npx tsc --noEmit`(リポジトリ直下で実行。`vite.config.ts`がルート直下にあるため`client/`で実行すると alias 解決に失敗する点に注意)= エラー0件 / `npx vite build` = 成功(1716 modules)。
+- 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `315e635` 時点の本番デプロイを Promote to Production。
