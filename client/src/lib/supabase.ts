@@ -995,28 +995,28 @@ export async function fetchFootAnalysisByUploadId(uploadId: string): Promise<Foo
 /**
  * 検出サイン(detected_signsのキー配列。例: "shoulder_swing_left"のように
  * サインkeyとside(left/right/both)を組み合わせたIDで保存する)を保存する。
- * 未完成(下書き)保存であり、is_completed確定は別途明示的に行う。
+ * 未完成(下書き)保存であり、is_completed確定は別途 confirmFootAnalysis() で明示的に行う。
+ *
+ * 2026-09-18: 左右ボタンを押すたびに呼ばれるため、以前は毎回 update_foot_analysis_with_history
+ * RPC経由で履歴(foot_analysis_revisions)を作っていたが、1回の分析作業で数十件のログが
+ * 積み上がり「変更履歴」が読めなくなっていた(冨永社長指摘)。下書き保存は履歴を作らない
+ * プレーンなupdateに変更し、履歴は確定時(confirmFootAnalysis)の1回だけ記録する。
  */
 export async function saveDetectedSigns(
   uploadId: string,
   orderId: string | null,
   userId: string | null,
   productionId: string,
-  detectedSigns: string[],
-  changedById: string | null
+  detectedSigns: string[]
 ): Promise<FootAnalysis> {
   const existing = await fetchFootAnalysisByUploadId(uploadId);
   if (existing) {
-    // 既存行の更新は改訂履歴RPC経由(呼び出し前のスナップショットをfoot_analysis_revisionsへ保存してから更新)
-    const { data, error } = await supabase.rpc('update_foot_analysis_with_history', {
-      p_analysis_id: existing.id,
-      p_detected_signs: detectedSigns,
-      p_mark_completed: false,
-      p_operator_member_id: null,
-      p_changed_by_type: 'staff',
-      p_changed_by_id: changedById,
-      p_change_reason: '検出サインの下書き保存',
-    });
+    const { data, error } = await supabase
+      .from('foot_analyses')
+      .update({ detected_signs: detectedSigns, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select()
+      .single();
     if (error) throw error;
     return data as FootAnalysis;
   }
@@ -1150,22 +1150,52 @@ export async function sendAnalysisResultNotification(params: {
 }
 
 /**
- * 分析完了として確定する(完了フラグ+完了日時+担当者を記録)。
- * 改訂履歴RPC経由(呼び出し前のスナップショットをfoot_analysis_revisionsへ保存してから更新)。
+ * 分析結果を確定する(完了フラグ+完了日時+担当者を記録)。
+ * 2026-09-18: 下書き保存(saveDetectedSigns)とは別に、確定時のこの1回だけ
+ * 改訂履歴RPC経由(呼び出し前のスナップショットをfoot_analysis_revisionsへ保存してから更新)で
+ * 履歴を作る。1回のチェック作業=履歴1件になるよう、detected_signsの更新もここでまとめて行う
+ * (以前はsaveDetectedSigns→completeFootAnalysisの2回呼びで確定のたびに履歴が2件できていた)。
  */
-export async function completeFootAnalysis(
-  footAnalysisId: string,
+export async function confirmFootAnalysis(
+  uploadId: string,
+  orderId: string | null,
+  userId: string | null,
+  productionId: string,
+  detectedSigns: string[],
   operatorMemberId: string | null
 ): Promise<FootAnalysis> {
-  const { data, error } = await supabase.rpc('update_foot_analysis_with_history', {
-    p_analysis_id: footAnalysisId,
-    p_detected_signs: null,
-    p_mark_completed: true,
-    p_operator_member_id: operatorMemberId,
-    p_changed_by_type: 'staff',
-    p_changed_by_id: operatorMemberId,
-    p_change_reason: '動作分析を確定',
-  });
+  const existing = await fetchFootAnalysisByUploadId(uploadId);
+  const now = new Date().toISOString();
+  if (existing) {
+    const { data, error } = await supabase.rpc('update_foot_analysis_with_history', {
+      p_analysis_id: existing.id,
+      p_detected_signs: detectedSigns,
+      p_mark_completed: true,
+      p_operator_member_id: operatorMemberId,
+      p_changed_by_type: 'staff',
+      p_changed_by_id: operatorMemberId,
+      p_change_reason: '動作分析を記録',
+    });
+    if (error) throw error;
+    return data as FootAnalysis;
+  }
+  // 一度も下書き保存されないまま確定された場合。新規行のためスナップショット対象が無く直接insertでよい。
+  const { data, error } = await supabase
+    .from('foot_analyses')
+    .insert({
+      upload_id: uploadId,
+      order_id: orderId,
+      user_id: userId,
+      production_id: productionId,
+      detected_signs: detectedSigns,
+      is_completed: true,
+      completed_at: now,
+      analyzed_at: now,
+      operator_member_id: operatorMemberId,
+      updated_at: now,
+    })
+    .select()
+    .single();
   if (error) throw error;
   return data as FootAnalysis;
 }

@@ -234,3 +234,14 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - ビルド: `npx tsc --noEmit`(リポジトリ直下)= エラー0件 / `npx vite build` = 成功(1716 modules)。
 - 既知の残課題(今回スコープ外・次回検討): 計測(foot-measure)側の変更履歴・作製中一覧表示にも同じ「担当者名が出ない」問題が残っている可能性が高い。
 - 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `7cac13b` 時点の本番デプロイを Promote to Production。
+
+## 2026-09-18(続き): 変更履歴が「チェック1回ごと」に大量記録される問題を修正 + 表現を「責任の所在ログ」から「分析の記録」に変更
+
+- 変更前 HEAD: `25cea98` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: 上記の実装後、冨永社長が実機確認したところ「変更履歴(責任の所在ログ)」に左右ボタンを押すたび(下書き保存のたび)の記録が積み上がり(#14〜#20 が数十秒の間に大量発生)、読めない状態になっていた。理由: 個々のチェックは同一人物が同一時間帯に行うことが多く粒度が細かすぎる意味が無い上、「責任の所在」という表現は分析者を萎縮させるとの指摘。
+- 修正:
+  - `client/src/lib/supabase.ts`: `saveDetectedSigns`(下書き保存・チェックのたびに呼ばれる)を、改訂履歴RPC経由から**プレーンな`update`(履歴を作らない)**に変更。`completeFootAnalysis`を`confirmFootAnalysis`に置き換え、detected_signsの更新+完了フラグ+履歴記録(1件のみ)を1回のRPC呼び出しでまとめて行うように統合(旧実装は確定のたびに「下書き保存」1件+「確定」1件の計2件が作られていた)。
+  - `client/src/pages/GaitAnalysis.tsx`: `persist()`を下書き(履歴なし)と確定(履歴1件)の2経路に明確に分離。「変更履歴(責任の所在ログ)」の見出しを「分析の記録」に変更。各行の`change_reason`表示を削除(全件同じ文言になり冗長なため)。
+- DB/RLSへの影響: なし(既存RPC・テーブルは無変更。呼び出し方のみ変更)。
+- ビルド: `npx tsc --noEmit` = エラー0件 / `npx vite build` = 成功(1716 modules)。
+- 戻し方: このコミットのみ `git revert`。または Vercel → customer-mgmt-console → Deployments で `25cea98` 時点の本番デプロイを Promote to Production。

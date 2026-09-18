@@ -15,7 +15,7 @@ import {
   fetchFootAnalysisByUploadId,
   fetchUploadById,
   saveDetectedSigns,
-  completeFootAnalysis,
+  confirmFootAnalysis,
   fetchCurrentMember,
   fetchMemberNameById,
   fetchAnalysisRevisions,
@@ -236,10 +236,12 @@ export default function GaitAnalysis() {
       const detected = Object.entries(next)
         .filter(([, side]) => side)
         .map(([key, side]) => signValue(key, side as Side));
-      const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected, memberId);
-      setFootAnalysisId(result.id);
+
       if (markCompleted) {
-        const completed = await completeFootAnalysis(result.id, memberId);
+        // 確定はこの1回の呼び出しだけで detected_signs の更新+完了フラグ+履歴記録(1件)を行う。
+        // 個々のチェック(下書き保存)では履歴を作らないため、記録は「確定した」という事実の1件だけになる。
+        const completed = await confirmFootAnalysis(uploadId, orderId, customerUserId, productionId, detected, memberId);
+        setFootAnalysisId(completed.id);
         // 作製中一覧の「分析」チェックを、確定と連動して自動でONにする(担当者・日時も記録)。
         // 失敗しても分析結果自体の確定は成立しているため、ここは握りつぶしてログのみ残す。
         try {
@@ -248,10 +250,14 @@ export default function GaitAnalysis() {
           console.error("toggleWorkflowStep(analy) failed:", e2);
         }
         await applyAnalysisMeta(completed);
-        toast.success("動作分析を確定しました");
+        toast.success("動作分析を記録しました");
+      } else {
+        // 下書き保存: チェックのたびに呼ばれるため、履歴は作らずdetected_signsだけ更新する。
+        const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected);
+        setFootAnalysisId(result.id);
       }
     } catch (e) {
-      console.error("saveDetectedSigns failed:", e);
+      console.error("persist(GaitAnalysis) failed:", e);
       setError("保存に失敗しました。");
     } finally {
       setSaving(false);
@@ -338,7 +344,7 @@ export default function GaitAnalysis() {
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <p className="text-xs font-bold mb-2 flex items-center gap-1.5" style={{ color: "#1a1a1a" }}>
                 <History size={13} className="text-gray-400" />
-                変更履歴(責任の所在ログ)
+                分析の記録
               </p>
               {revisions.length === 0 ? (
                 <p className="text-xs text-gray-400">変更履歴はまだありません。</p>
@@ -349,7 +355,6 @@ export default function GaitAnalysis() {
                       <span className="text-gray-500">
                         #{r.revision_number}{" "}
                         {r.changed_by_id && revisionNames[r.changed_by_id] ? revisionNames[r.changed_by_id] : "スタッフ"}
-                        {r.change_reason && <span className="text-gray-400">({r.change_reason})</span>}
                       </span>
                       <span className="text-gray-400 whitespace-nowrap">
                         {new Date(r.created_at).toLocaleString("ja-JP")}
