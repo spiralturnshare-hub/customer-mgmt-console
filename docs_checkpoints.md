@@ -294,3 +294,12 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - **旧データ**: 旧チェックボックスの保存値 `no_arm_swing:both` は「ない=明らかに振っていない」と判定していたはずなので、編集フォーム上は「+」として読み込む(保存し直すまでDBは `both` のまま)。Greenはローンチ前でテストデータのみ。
 - 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / 変換ロジックをスクリプトで確認。見た目は実機未確認。
 - 戻し方: このコミットのみ `git revert`。または Vercel で `56d1412` 時点のデプロイを Promote to Production。
+
+## 2026-09-19(続き4): 動作分析の「最初の確定」時に、Make へ通知を依頼する処理を追加
+
+- 変更前 HEAD: `d948d8e` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: 動作分析を確定したとき、顧客Email・取扱店Emailへ自動通知する(冨永社長指示。手順書 = `spiralturn-green-integration/docs/39-analysis-notification-make-scenario.md`)。
+- 変更: `client/src/lib/analysisNotify.ts`(新規。環境変数 `VITE_ANALYSIS_NOTIFY_WEBHOOK` の Make Webhook に `{ foot_analysis_id }` だけを POST。**未設定なら何もしない**)、`GaitAnalysis.tsx`(**最初の確定のときだけ**呼ぶ。修正後の再確定では呼ばない。通知が失敗しても確定は取り消さず警告トーストのみ)。
+- **本番への影響: 現時点ではゼロ**(環境変数が未設定のため通知は行われない。Make シナリオ構築後に Vercel へ環境変数を設定して有効化)。
+- 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功。実際の送信は Make 未構築のため未検証。
+- 戻し方: このコミットのみ `git revert`。または Vercel で `d948d8e` 時点のデプロイを Promote to Production。

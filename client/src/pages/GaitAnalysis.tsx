@@ -34,6 +34,7 @@ import {
   type Level,
   type SignSel,
 } from "@/lib/gaitSigns";
+import { notifyAnalysisConfirmed } from "@/lib/analysisNotify";
 
 const PINK = "#D62598";
 // 強弱ボタンの配色(2026-09-19 冨永社長指定: 弱=緑 / 強=赤っぽいピンク)。
@@ -293,6 +294,8 @@ export default function GaitAnalysis() {
       if (markCompleted) {
         // 確定はこの1回の呼び出しだけで detected_signs の更新+完了フラグ+履歴記録(1件)を行う。
         // 個々のチェック(下書き保存)では履歴を作らないため、記録は「確定した」という事実の1件だけになる。
+        // 通知は「最初の確定」のときだけ。修正後の再確定ではお客様へメールを連発しない(要望があれば変更)。
+        const firstConfirm = !isCompleted;
         const completed = await confirmFootAnalysis(uploadId, orderId, customerUserId, productionId, detected, memberId);
         setFootAnalysisId(completed.id);
         setSavedEntries(detected);
@@ -305,6 +308,17 @@ export default function GaitAnalysis() {
         }
         await applyAnalysisMeta(completed);
         toast.success("動作分析を記録しました");
+        if (firstConfirm) {
+          // 分析の確定自体は成立済み。通知に失敗しても確定は取り消さず、警告だけ出す。
+          notifyAnalysisConfirmed(completed.id)
+            .then((r) => {
+              if (r === "sent") toast.success("お客様・取扱店への通知を依頼しました");
+            })
+            .catch((e3) => {
+              console.error("notifyAnalysisConfirmed failed:", e3);
+              toast.warning("分析は記録しましたが、お客様への通知の依頼に失敗しました。");
+            });
+        }
       } else {
         // 下書き保存: チェックのたびに呼ばれるため、履歴は作らずdetected_signsだけ更新する。
         const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected);
