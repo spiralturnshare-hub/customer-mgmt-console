@@ -267,3 +267,11 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - DB変更: なし(detected_signs は text[] のまま。新しい文字列値が入るだけ)。ただしメール本文RPCの追随が必要 → migration 055(別途Greenへ適用)。
 - 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / gaitSigns.ts の変換ロジックを実行して往復変換・旧形式読込・ラベルまとめを確認済み。**画面上の見た目・操作感は実機未確認**(ブラウザ操作環境が無いため)。
 - 戻し方: このコミットのみ `git revert`。または Vercel で `81806f9` 時点の本番デプロイを Promote to Production。
+
+## 2026-09-19(続き): 強弱4ボタンの見た目を微調整
+
+- 変更前 HEAD: `c371d4e` / Vercel Production: https://customer-console-jade.vercel.app
+- 冨永社長の指摘3点: ①左と右の境目が分かりづらい ②選択時のベタ塗り(緑・赤)の色が良くない ③強ボタンが横に大きすぎる。
+- 変更(`client/src/pages/GaitAnalysis.tsx` の `SideButtons` のみ・ロジック不変): ①左強と右弱の間に縦線(`w-px` の細い灰色線)を追加 ②選択中はベタ塗りをやめ、やわらかいグラデーション+影(弱=エメラルド→ティール / 強=ローズ→ピンク)、未選択は淡い色地+細い枠に変更 ③強ボタンの幅を弱の2倍→1.5倍に縮小。
+- 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功。見た目は実機未確認。
+- 戻し方: このコミットのみ `git revert`。または Vercel で `c371d4e` 時点のデプロイを Promote to Production。

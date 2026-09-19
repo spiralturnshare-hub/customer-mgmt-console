@@ -6,7 +6,7 @@
  * order_idに依存しないロジックにしている（uploadIdを起点に扱う）。
  * 詳細: docs/07-gait-analysis-and-workflow-ui.md
  */
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { ArrowLeft, Check, History, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -36,9 +36,24 @@ import {
 } from "@/lib/gaitSigns";
 
 const PINK = "#D62598";
-// 強弱ボタンの色(2026-09-19 冨永社長指定: 弱=緑 / 強=赤っぽいピンク)
-const WEAK_COLOR = "#16A34A";
-const STRONG_COLOR = "#E11D48";
+// 強弱ボタンの配色(2026-09-19 冨永社長指定: 弱=緑 / 強=赤っぽいピンク)。
+// 選択中はベタ塗りにせず、やわらかいグラデーション+影で上品に見せる。未選択は淡い色地+細い枠。
+const LEVEL_STYLE: Record<Level, { text: string; border: string; bg: string; activeBg: string; shadow: string }> = {
+  weak: {
+    text: "#059669",
+    border: "#A7F3D0",
+    bg: "#ECFDF5",
+    activeBg: "linear-gradient(135deg, #34D399 0%, #0D9488 100%)",
+    shadow: "0 2px 8px rgba(13,148,136,0.35)",
+  },
+  strong: {
+    text: "#E11D48",
+    border: "#FECDD3",
+    bg: "#FFF1F2",
+    activeBg: "linear-gradient(135deg, #FB7185 0%, #DB2777 100%)",
+    shadow: "0 2px 8px rgba(219,39,119,0.35)",
+  },
+};
 
 // analysis_signs.side列はDB上の用途が不明(1行1サインなのに単一値しか持てないCHECK制約)なため、
 // 「左右/両側どのボタンを出すか」はここで例外リストとして明示管理する。
@@ -94,7 +109,8 @@ function SideButtons({
     });
   }
 
-  // 弱ボタンは小さく(flex 1)、強ボタンはその2倍幅(flex 2)。左グループと右グループの間は少し空ける。
+  // 弱ボタンは小さく(flex 1)、強ボタンはその1.5倍幅。左グループと右グループの境目に縦線を入れて、
+  // どこからが左でどこからが右かを一目で分かるようにする。
   const buttons: { side: "left" | "right"; level: Level; label: string }[] = [
     { side: "left", level: "weak", label: "左弱" },
     { side: "left", level: "strong", label: "左強" },
@@ -106,25 +122,28 @@ function SideButtons({
     <div className="flex items-stretch gap-1.5 w-full">
       {buttons.map((b) => {
         const active = sel[b.side] === b.level;
-        const color = b.level === "weak" ? WEAK_COLOR : STRONG_COLOR;
+        const st = LEVEL_STYLE[b.level];
         return (
-          <button
-            key={`${b.side}_${b.level}`}
-            type="button"
-            onClick={() => toggle(b.side, b.level)}
-            className={`min-w-0 text-sm py-2 rounded-lg border-2 transition-colors ${
-              b.side === "right" && b.level === "weak" ? "ml-2" : ""
-            }`}
-            style={{
-              flex: b.level === "strong" ? 2 : 1,
-              borderColor: color,
-              backgroundColor: active ? color : "#fff",
-              color: active ? "#fff" : color,
-              fontWeight: active ? 700 : 500,
-            }}
-          >
-            {b.label}
-          </button>
+          <Fragment key={`${b.side}_${b.level}`}>
+            {b.side === "right" && b.level === "weak" && (
+              <div className="self-stretch w-px mx-1 bg-gray-300" aria-hidden="true" />
+            )}
+            <button
+              type="button"
+              onClick={() => toggle(b.side, b.level)}
+              className="min-w-0 text-sm py-2 rounded-lg transition-all"
+              style={{
+                flex: b.level === "strong" ? 1.5 : 1,
+                border: `1.5px solid ${active ? "transparent" : st.border}`,
+                background: active ? st.activeBg : st.bg,
+                color: active ? "#fff" : st.text,
+                fontWeight: active ? 700 : 500,
+                boxShadow: active ? st.shadow : "none",
+              }}
+            >
+              {b.label}
+            </button>
+          </Fragment>
         );
       })}
     </div>
