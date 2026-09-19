@@ -275,3 +275,13 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 変更(`client/src/pages/GaitAnalysis.tsx` の `SideButtons` のみ・ロジック不変): ①左強と右弱の間に縦線(`w-px` の細い灰色線)を追加 ②選択中はベタ塗りをやめ、やわらかいグラデーション+影(弱=エメラルド→ティール / 強=ローズ→ピンク)、未選択は淡い色地+細い枠に変更 ③強ボタンの幅を弱の2倍→1.5倍に縮小。
 - 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功。見た目は実機未確認。
 - 戻し方: このコミットのみ `git revert`。または Vercel で `c371d4e` 時点のデプロイを Promote to Production。
+
+## 2026-09-19(続き2): 強弱の表記を「弱→±」「強→+」の記号に変更
+
+- 変更前 HEAD: `c68d604` / Vercel Production: https://customer-console-jade.vercel.app
+- 冨永社長指示: 「弱」「強」の文字が分かりづらい。弱=「±」(あるかどうか曖昧・わずかにある)、強=「+」(明らかにある)の記号にする。緑と赤の色分けと合わせて「+の方が強い」を表現する。
+- 変更: `GaitAnalysis.tsx`(ボタン表記を 左± / 左+ / 右± / 右+、記号を読みやすく text-base、編集フォーム上部に凡例「± = あるかどうか曖昧・わずかにある / + = 明らかにある」を追加)、`lib/gaitSigns.ts`(結果サマリー等の表示ラベルを 左±/左+/右±/右+ に)。
+- **表示だけの変更**: DBの保存値(`left_weak` / `left_strong` 等)は不変。過去に保存した分もそのまま新表記で表示される。
+- **対象外(意図的)**: お客さん向け画面(upload-center)とお客さんへのメール本文は「左弱・左強」のままにしている。記号だけ(「左+」)ではお客さんに意味が伝わらないため。統一する場合は upload-center の `fetchMyFootAnalysis` のラベル表と migration 055 のRPCを変更する。
+- 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / ラベル変換と保存値不変をスクリプトで確認。見た目は実機未確認。
+- 戻し方: このコミットのみ `git revert`。または Vercel で `c68d604` 時点のデプロイを Promote to Production。

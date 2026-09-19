@@ -5,6 +5,9 @@
  * 「左に少しある(弱)」と「左に明らかにある(強)」を区別できるよう、左弱・左強・右弱・右強の
  * 4ボタンに変更した。左と右は独立に選べる(=旧「両側」は左右とも選ぶことで表現するため廃止)。
  *
+ * 表示記号(2026-09-19 冨永社長指定): 弱 = 「±」(あるかどうか曖昧・わずかにある)、強 = 「+」(明らかにある)。
+ *   内部の保存値は left_weak / left_strong のまま(記号は表示だけ)。
+ *
  * 保存形式(detected_signs の各要素は "サインkey:側"):
  *   新: "shoulder_swing:left_weak" / ":left_strong" / ":right_weak" / ":right_strong"
  *       左右とも選んだ場合は2要素("key:left_strong" と "key:right_weak" など)
@@ -27,10 +30,10 @@ export interface SignSel {
 export const EMPTY_SEL: SignSel = { left: null, right: null, check: false };
 
 const SIDE_LABEL: Record<string, string> = {
-  left_weak: "左弱",
-  left_strong: "左強",
-  right_weak: "右弱",
-  right_strong: "右強",
+  left_weak: "左±",
+  left_strong: "左+",
+  right_weak: "右±",
+  right_strong: "右+",
   left: "左",
   right: "右",
   both: "両側",

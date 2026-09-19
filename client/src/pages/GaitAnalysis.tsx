@@ -109,13 +109,13 @@ function SideButtons({
     });
   }
 
-  // 弱ボタンは小さく(flex 1)、強ボタンはその1.5倍幅。左グループと右グループの境目に縦線を入れて、
+  // ±(弱)ボタンは小さく(flex 1)、+(強)ボタンはその1.5倍幅。左グループと右グループの境目に縦線を入れて、
   // どこからが左でどこからが右かを一目で分かるようにする。
   const buttons: { side: "left" | "right"; level: Level; label: string }[] = [
-    { side: "left", level: "weak", label: "左弱" },
-    { side: "left", level: "strong", label: "左強" },
-    { side: "right", level: "weak", label: "右弱" },
-    { side: "right", level: "strong", label: "右強" },
+    { side: "left", level: "weak", label: "左±" },
+    { side: "left", level: "strong", label: "左+" },
+    { side: "right", level: "weak", label: "右±" },
+    { side: "right", level: "strong", label: "右+" },
   ];
 
   return (
@@ -131,7 +131,7 @@ function SideButtons({
             <button
               type="button"
               onClick={() => toggle(b.side, b.level)}
-              className="min-w-0 text-sm py-2 rounded-lg transition-all"
+              className="min-w-0 text-base leading-tight py-2 rounded-lg transition-all"
               style={{
                 flex: b.level === "strong" ? 1.5 : 1,
                 border: `1.5px solid ${active ? "transparent" : st.border}`,
@@ -406,6 +406,10 @@ export default function GaitAnalysis() {
           <>
             <p className="text-xs text-gray-400 mb-6">
               歩行動画から検出された悪い兆候を、部位ごとにチェックしてください。
+            </p>
+            <p className="text-[11px] text-gray-400 -mt-4 mb-6">
+              <span className="font-bold" style={{ color: LEVEL_STYLE.weak.text }}>±</span> = あるかどうか曖昧・わずかにある
+              　<span className="font-bold" style={{ color: LEVEL_STYLE.strong.text }}>+</span> = 明らかにある
             </p>
 
             {signs.length === 0 ? (
