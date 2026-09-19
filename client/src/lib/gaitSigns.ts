@@ -11,7 +11,7 @@
  * 保存形式(detected_signs の各要素は "サインkey:側"):
  *   新: "shoulder_swing:left_weak" / ":left_strong" / ":right_weak" / ":right_strong"
  *       左右とも選んだ場合は2要素("key:left_strong" と "key:right_weak" など)
- *       左右の概念が無いサイン(no_arm_swing 等)は従来どおり "key:both"
+ *       左右の概念が無いサイン(no_arm_swing)は "key:weak" / "key:strong"(2026-09-19〜。以前は "key:both" のチェックのみ)
  *   旧: "key:left" / "key:right" / "key:both"(強弱導入前に保存された分。読み取りは継続対応)
  *
  * 旧形式の読み込み時の扱い: 旧UIで側を選んでいた = 「明らかにある」と判断していたはずなので、
@@ -23,11 +23,11 @@ export type Level = "weak" | "strong";
 export interface SignSel {
   left: Level | null;
   right: Level | null;
-  /** 左右の概念が無いサイン(チェックボックス型)用 */
-  check: boolean;
+  /** 左右の概念が無いサイン(ノーアームスイング)用の ±(weak) / +(strong) */
+  level: Level | null;
 }
 
-export const EMPTY_SEL: SignSel = { left: null, right: null, check: false };
+export const EMPTY_SEL: SignSel = { left: null, right: null, level: null };
 
 const SIDE_LABEL: Record<string, string> = {
   left_weak: "左±",
@@ -37,6 +37,9 @@ const SIDE_LABEL: Record<string, string> = {
   left: "左",
   right: "右",
   both: "両側",
+  // 左右の概念が無いサイン(ノーアームスイング)。2026-09-19 追加
+  weak: "±",
+  strong: "+",
 };
 
 /** detected_signs の「側」部分から表示用ラベルを返す(旧形式も対応) */
@@ -55,7 +58,9 @@ export function parseDetected(
     if (!key || !side) continue;
     const cur = result[key] ?? { ...EMPTY_SEL };
     if (checkOnlyKeys.has(key)) {
-      cur.check = true;
+      // 左右なしサインの保存値は weak / strong。旧チェックボックス(key:both)は
+      // 「ない(=明らかに振っていない)」と判定していたはずなので + として読み込む。
+      cur.level = side === "weak" ? "weak" : "strong";
     } else if (side === "left_weak") cur.left = "weak";
     else if (side === "left_strong" || side === "left") cur.left = "strong";
     else if (side === "right_weak") cur.right = "weak";
@@ -78,7 +83,7 @@ export function toEntries(
   const out: string[] = [];
   for (const [key, sel] of Object.entries(selections)) {
     if (checkOnlyKeys.has(key)) {
-      if (sel.check) out.push(`${key}:both`);
+      if (sel.level) out.push(`${key}:${sel.level}`);
       continue;
     }
     if (sel.left) out.push(`${key}:left_${sel.left}`);

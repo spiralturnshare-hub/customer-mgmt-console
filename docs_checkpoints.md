@@ -285,3 +285,12 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - **対象外(意図的)**: お客さん向け画面(upload-center)とお客さんへのメール本文は「左弱・左強」のままにしている。記号だけ(「左+」)ではお客さんに意味が伝わらないため。統一する場合は upload-center の `fetchMyFootAnalysis` のラベル表と migration 055 のRPCを変更する。
 - 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / ラベル変換と保存値不変をスクリプトで確認。見た目は実機未確認。
 - 戻し方: このコミットのみ `git revert`。または Vercel で `c68d604` 時点のデプロイを Promote to Production。
+
+## 2026-09-19(続き3): ノーアームスイングサインも ± / + の2段階に変更
+
+- 変更前 HEAD: `56d1412` / Vercel Production: https://customer-console-jade.vercel.app
+- 冨永社長指示: ノーアームスイングは「腕を振っているか」の判定だが、「わずか・十分に振っていない」と「明らかに全く振っていない」を分ける必要がある。チェックボックスをやめ、他サインと同じ ± / + にする(左右の概念は無いので「±」「+」の2ボタンのみ)。
+- 変更: `lib/gaitSigns.ts`(`SignSel.check`→`level`、保存値 `no_arm_swing:weak` / `:strong`、表示 ± / +)、`GaitAnalysis.tsx`(ボタンを `LevelButton` に共通化し、ノーアームスイングは ±/+ の2ボタン+説明「± = わずか・十分に振っていない / + = 明らかに全く振っていない」)。
+- **旧データ**: 旧チェックボックスの保存値 `no_arm_swing:both` は「ない=明らかに振っていない」と判定していたはずなので、編集フォーム上は「+」として読み込む(保存し直すまでDBは `both` のまま)。Greenはローンチ前でテストデータのみ。
+- 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / 変換ロジックをスクリプトで確認。見た目は実機未確認。
+- 戻し方: このコミットのみ `git revert`。または Vercel で `56d1412` 時点のデプロイを Promote to Production。

@@ -8,7 +8,7 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
-import { ArrowLeft, Check, History, RefreshCw } from "lucide-react";
+import { ArrowLeft, History, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   fetchAnalysisSigns,
@@ -58,9 +58,42 @@ const LEVEL_STYLE: Record<Level, { text: string; border: string; bg: string; act
 // analysis_signs.side列はDB上の用途が不明(1行1サインなのに単一値しか持てないCHECK制約)なため、
 // 「左右/両側どのボタンを出すか」はここで例外リストとして明示管理する。
 // 根拠: 2026-08-25 Glideスクリーンショットの目視確認。要スプレッドシート照合。
-const SIGN_KEYS_WITHOUT_SIDE = new Set(["no_arm_swing"]); // 左右概念なし、単一チェックボックス
+const SIGN_KEYS_WITHOUT_SIDE = new Set(["no_arm_swing"]); // 左右概念なし。±/+ の2段階ボタン
 // 「少ない方をチェック」型 = 片側のみ選択可(左右同時には選べない。強弱は選べる)
 const SIGN_KEYS_LR_ONLY = new Set(["single_arm_swing", "sole_area_compare"]);
+
+// ±(弱)/ +(強)の1ボタン。選択中はやわらかいグラデーション+影、未選択は淡い色地+細い枠。
+function LevelButton({
+  level,
+  active,
+  label,
+  onClick,
+}: {
+  level: Level;
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const st = LEVEL_STYLE[level];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="min-w-0 text-base leading-tight py-2 rounded-lg transition-all"
+      style={{
+        // ±(弱)は小さく(flex 1)、+(強)はその1.5倍幅
+        flex: level === "strong" ? 1.5 : 1,
+        border: `1.5px solid ${active ? "transparent" : st.border}`,
+        background: active ? st.activeBg : st.bg,
+        color: active ? "#fff" : st.text,
+        fontWeight: active ? 700 : 500,
+        boxShadow: active ? st.shadow : "none",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 function SideButtons({
   sign,
@@ -71,34 +104,33 @@ function SideButtons({
   sel: SignSel;
   onChange: (next: SignSel) => void;
 }) {
-  // 左右の概念が無いサインは単一チェックボックス(強弱なし)
+  // 左右の概念が無いサイン(ノーアームスイング)は、左右なしの ± / + の2段階ボタン。
+  // 「わずか・十分に振っていない(±)」と「明らかに全く振っていない(+)」を分ける(2026-09-19 冨永社長指示)。
   if (SIGN_KEYS_WITHOUT_SIDE.has(sign.key)) {
-    const checked = sel.check;
     return (
-      <button
-        type="button"
-        onClick={() => onChange({ ...sel, check: !checked })}
-        className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border"
-        style={{
-          borderColor: checked ? PINK : "#ddd",
-          backgroundColor: checked ? `${PINK}15` : "#fff",
-          color: checked ? PINK : "#555",
-        }}
-      >
-        <span
-          className="w-4 h-4 rounded flex items-center justify-center"
-          style={{ backgroundColor: checked ? PINK : "#f0f0f0", border: checked ? "none" : "1px solid #ccc" }}
-        >
-          {checked && <Check size={11} color="#fff" strokeWidth={3} />}
-        </span>
-        {sign.title}
-      </button>
+      <div>
+        <div className="flex items-stretch gap-1.5 w-1/2 min-w-[160px]">
+          {(["weak", "strong"] as Level[]).map((level) => (
+            <LevelButton
+              key={level}
+              level={level}
+              active={sel.level === level}
+              label={level === "weak" ? "±" : "+"}
+              onClick={() => onChange({ ...sel, level: sel.level === level ? null : level })}
+            />
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-400 mt-1.5">
+          <span className="font-bold" style={{ color: LEVEL_STYLE.weak.text }}>±</span> = わずか・十分に振っていない
+          　<span className="font-bold" style={{ color: LEVEL_STYLE.strong.text }}>+</span> = 明らかに全く振っていない
+        </p>
+      </div>
     );
   }
 
   const lrOnly = SIGN_KEYS_LR_ONLY.has(sign.key);
 
-  // 同じボタンをもう一度押すと解除。同じ側の弱⇔強は排他。左と右は独立(lrOnly のサインだけ片側のみ)。
+  // 同じボタンをもう一度押すと解除。同じ側の±⇔+は排他。左と右は独立(lrOnly のサインだけ片側のみ)。
   function toggle(side: "left" | "right", level: Level) {
     const nextLevel = sel[side] === level ? null : level;
     const other = side === "left" ? "right" : "left";
@@ -109,8 +141,7 @@ function SideButtons({
     });
   }
 
-  // ±(弱)ボタンは小さく(flex 1)、+(強)ボタンはその1.5倍幅。左グループと右グループの境目に縦線を入れて、
-  // どこからが左でどこからが右かを一目で分かるようにする。
+  // 左グループと右グループの境目に縦線を入れて、どこからが左でどこからが右かを一目で分かるようにする。
   const buttons: { side: "left" | "right"; level: Level; label: string }[] = [
     { side: "left", level: "weak", label: "左±" },
     { side: "left", level: "strong", label: "左+" },
@@ -120,32 +151,19 @@ function SideButtons({
 
   return (
     <div className="flex items-stretch gap-1.5 w-full">
-      {buttons.map((b) => {
-        const active = sel[b.side] === b.level;
-        const st = LEVEL_STYLE[b.level];
-        return (
-          <Fragment key={`${b.side}_${b.level}`}>
-            {b.side === "right" && b.level === "weak" && (
-              <div className="self-stretch w-px mx-1 bg-gray-300" aria-hidden="true" />
-            )}
-            <button
-              type="button"
-              onClick={() => toggle(b.side, b.level)}
-              className="min-w-0 text-base leading-tight py-2 rounded-lg transition-all"
-              style={{
-                flex: b.level === "strong" ? 1.5 : 1,
-                border: `1.5px solid ${active ? "transparent" : st.border}`,
-                background: active ? st.activeBg : st.bg,
-                color: active ? "#fff" : st.text,
-                fontWeight: active ? 700 : 500,
-                boxShadow: active ? st.shadow : "none",
-              }}
-            >
-              {b.label}
-            </button>
-          </Fragment>
-        );
-      })}
+      {buttons.map((b) => (
+        <Fragment key={`${b.side}_${b.level}`}>
+          {b.side === "right" && b.level === "weak" && (
+            <div className="self-stretch w-px mx-1 bg-gray-300" aria-hidden="true" />
+          )}
+          <LevelButton
+            level={b.level}
+            active={sel[b.side] === b.level}
+            label={b.label}
+            onClick={() => toggle(b.side, b.level)}
+          />
+        </Fragment>
+      ))}
     </div>
   );
 }
