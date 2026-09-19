@@ -303,3 +303,12 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - **本番への影響: 現時点ではゼロ**(環境変数が未設定のため通知は行われない。Make シナリオ構築後に Vercel へ環境変数を設定して有効化)。
 - 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功。実際の送信は Make 未構築のため未検証。
 - 戻し方: このコミットのみ `git revert`。または Vercel で `d948d8e` 時点のデプロイを Promote to Production。
+
+## 2026-09-19(続き5): 動作分析の確定通知を有効化(Vercel 環境変数 VITE_ANALYSIS_NOTIFY_WEBHOOK を設定して再デプロイ)
+
+- 変更前 HEAD: `b03ff7b` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: Make シナリオ `analysis_result_notification - Green`(ID 7497345)を Blueprint Import で構築し、テスト送信でメール到達・通信履歴記録まで確認済み(冨永社長「これでよい」)。「中途半端にせず完了させる」との指示で有効化する。
+- 変更: コード変更なし。Vercel Production に `VITE_ANALYSIS_NOTIFY_WEBHOOK`(Make の Custom webhook URL。Non-sensitive・VITE のためブラウザに配信される準公開値)を追加し、再デプロイのためこの記録だけをコミットして push。
+- **本番への影響**: 動作分析の「最初の確定」で、顧客Email(と、取扱店送信ONの注文は取扱店Email)へ通知が送られる。Make シナリオを ON にした時点から有効。
+- 検証: 環境変数の追加を `vercel env ls` で確認。デプロイ後に本番バンドルへ URL が入ったことを確認する。
+- 戻し方: Make シナリオを OFF にする(即時停止)。または Vercel の `VITE_ANALYSIS_NOTIFY_WEBHOOK` を削除して再デプロイ(UI は環境変数が無ければ何もしない)。
