@@ -1,6 +1,6 @@
 /**
  * GaitAnalysis - 動作分析画面（Glideからの移植）
- * 部位（体幹・骨盤/腕/脚/足部）ごとにサインを表示し、左右/両側を選択して検出結果を保存する。
+ * 部位（体幹・骨盤/腕/脚/足部）ごとにサインを表示し、左右×強弱(左弱・左強・右弱・右強)を選択して検出結果を保存する。
  *
  * 重要: 動作分析は将来インソール注文から独立した単商品として販売予定のため、
  * order_idに依存しないロジックにしている（uploadIdを起点に扱う）。
@@ -25,42 +25,44 @@ import {
   type AnalysisRevision,
 } from "@/lib/supabase";
 
-// 左右/両側の表示ラベル(CustomerDetail.tsxの動作分析結果カードと同じ対応)
-const SIDE_LABEL: Record<string, string> = { left: "左", right: "右", both: "両側" };
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  EMPTY_SEL,
+  parseDetected,
+  toEntries,
+  groupDetectedLabels,
+  type Level,
+  type SignSel,
+} from "@/lib/gaitSigns";
 
 const PINK = "#D62598";
-type Side = "left" | "right" | "both";
-
-// detected_signs には "key:side" 形式（例: "shoulder_swing:left"）で保存する
-function signValue(key: string, side: Side): string {
-  return `${key}:${side}`;
-}
+// 強弱ボタンの色(2026-09-19 冨永社長指定: 弱=緑 / 強=赤っぽいピンク)
+const WEAK_COLOR = "#16A34A";
+const STRONG_COLOR = "#E11D48";
 
 // analysis_signs.side列はDB上の用途が不明(1行1サインなのに単一値しか持てないCHECK制約)なため、
 // 「左右/両側どのボタンを出すか」はここで例外リストとして明示管理する。
 // 根拠: 2026-08-25 Glideスクリーンショットの目視確認。要スプレッドシート照合。
 const SIGN_KEYS_WITHOUT_SIDE = new Set(["no_arm_swing"]); // 左右概念なし、単一チェックボックス
-const SIGN_KEYS_LR_ONLY = new Set(["single_arm_swing", "sole_area_compare"]); // 「両側」ボタン無し
+// 「少ない方をチェック」型 = 片側のみ選択可(左右同時には選べない。強弱は選べる)
+const SIGN_KEYS_LR_ONLY = new Set(["single_arm_swing", "sole_area_compare"]);
 
 function SideButtons({
   sign,
-  selected,
-  onSelect,
+  sel,
+  onChange,
 }: {
   sign: AnalysisSign;
-  selected: Side | null;
-  onSelect: (side: Side | null) => void;
+  sel: SignSel;
+  onChange: (next: SignSel) => void;
 }) {
-  const hasSide = !SIGN_KEYS_WITHOUT_SIDE.has(sign.key);
-  const allowsBoth = hasSide && !SIGN_KEYS_LR_ONLY.has(sign.key);
-
-  if (!hasSide) {
-    const checked = selected === "both";
+  // 左右の概念が無いサインは単一チェックボックス(強弱なし)
+  if (SIGN_KEYS_WITHOUT_SIDE.has(sign.key)) {
+    const checked = sel.check;
     return (
       <button
         type="button"
-        onClick={() => onSelect(checked ? null : "both")}
+        onClick={() => onChange({ ...sel, check: !checked })}
         className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border"
         style={{
           borderColor: checked ? PINK : "#ddd",
@@ -79,29 +81,49 @@ function SideButtons({
     );
   }
 
-  const options: { side: Side; label: string }[] = [
-    { side: "left", label: "左" },
-    { side: "right", label: "右" },
-    ...(allowsBoth ? [{ side: "both" as Side, label: "両側" }] : []),
+  const lrOnly = SIGN_KEYS_LR_ONLY.has(sign.key);
+
+  // 同じボタンをもう一度押すと解除。同じ側の弱⇔強は排他。左と右は独立(lrOnly のサインだけ片側のみ)。
+  function toggle(side: "left" | "right", level: Level) {
+    const nextLevel = sel[side] === level ? null : level;
+    const other = side === "left" ? "right" : "left";
+    onChange({
+      ...sel,
+      [side]: nextLevel,
+      ...(lrOnly && nextLevel ? { [other]: null } : {}),
+    });
+  }
+
+  // 弱ボタンは小さく(flex 1)、強ボタンはその2倍幅(flex 2)。左グループと右グループの間は少し空ける。
+  const buttons: { side: "left" | "right"; level: Level; label: string }[] = [
+    { side: "left", level: "weak", label: "左弱" },
+    { side: "left", level: "strong", label: "左強" },
+    { side: "right", level: "weak", label: "右弱" },
+    { side: "right", level: "strong", label: "右強" },
   ];
 
   return (
-    <div className="flex gap-2">
-      {options.map((opt) => {
-        const active = selected === opt.side;
+    <div className="flex items-stretch gap-1.5 w-full">
+      {buttons.map((b) => {
+        const active = sel[b.side] === b.level;
+        const color = b.level === "weak" ? WEAK_COLOR : STRONG_COLOR;
         return (
           <button
-            key={opt.side}
+            key={`${b.side}_${b.level}`}
             type="button"
-            onClick={() => onSelect(active ? null : opt.side)}
-            className="text-sm px-3 py-1.5 rounded-lg border font-medium transition-colors"
+            onClick={() => toggle(b.side, b.level)}
+            className={`min-w-0 text-sm py-2 rounded-lg border-2 transition-colors ${
+              b.side === "right" && b.level === "weak" ? "ml-2" : ""
+            }`}
             style={{
-              borderColor: active ? PINK : "#ddd",
-              backgroundColor: active ? PINK : "#fff",
-              color: active ? "#fff" : "#555",
+              flex: b.level === "strong" ? 2 : 1,
+              borderColor: color,
+              backgroundColor: active ? color : "#fff",
+              color: active ? "#fff" : color,
+              fontWeight: active ? 700 : 500,
             }}
           >
-            {opt.label}
+            {b.label}
           </button>
         );
       })}
@@ -116,7 +138,9 @@ export default function GaitAnalysis() {
   const { user } = useAuth();
 
   const [signs, setSigns] = useState<AnalysisSign[]>([]);
-  const [selections, setSelections] = useState<Record<string, Side | null>>({});
+  const [selections, setSelections] = useState<Record<string, SignSel>>({});
+  // 保存済み(=結果サマリー表示用)の detected_signs。編集中の選択とは別に、確定/読込時点の内容を保持する。
+  const [savedEntries, setSavedEntries] = useState<string[]>([]);
   const [footAnalysisId, setFootAnalysisId] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [productionId, setProductionId] = useState<string | null>(null);
@@ -182,15 +206,11 @@ export default function GaitAnalysis() {
         if (cancelled) return;
         setProductionId(workflow.id);
 
-        const initial: Record<string, Side | null> = {};
         if (analysis?.detected_signs) {
-          for (const entry of analysis.detected_signs) {
-            const [key, side] = entry.split(":");
-            if (key && side) initial[key] = side as Side;
-          }
           setFootAnalysisId(analysis.id);
         }
-        setSelections(initial);
+        setSelections(parseDetected(analysis?.detected_signs, SIGN_KEYS_WITHOUT_SIDE));
+        setSavedEntries(analysis?.detected_signs ?? []);
         await applyAnalysisMeta(analysis);
       } catch (e) {
         if (!cancelled) setError("データの取得に失敗しました。");
@@ -216,32 +236,29 @@ export default function GaitAnalysis() {
     return Array.from(map.entries());
   }, [signs]);
 
-  // 確定済みの検出内容(結果サマリー表示用)。selections は保存済みの内容と同期している。
+  // 確定済みの検出内容(結果サマリー表示用)。左右両方ある場合は1行にまとめる(例: 「左強 / 右弱」)。
   const detectedList = useMemo(() => {
     const signByKey = new Map(signs.map((s) => [s.key, s]));
-    return Object.entries(selections)
-      .filter(([, side]) => side)
-      .map(([key, side]) => {
-        const sign = signByKey.get(key);
-        if (!sign) return null;
-        return { title: sign.title, sideLabel: SIDE_LABEL[side as string] ?? side };
-      })
-      .filter((v): v is { title: string; sideLabel: string } => v !== null);
-  }, [signs, selections]);
+    const out: { title: string; sideLabel: string }[] = [];
+    groupDetectedLabels(savedEntries).forEach((labels, key) => {
+      const sign = signByKey.get(key);
+      if (sign) out.push({ title: sign.title, sideLabel: labels.join(" / ") });
+    });
+    return out;
+  }, [signs, savedEntries]);
 
-  async function persist(next: Record<string, Side | null>, markCompleted: boolean) {
+  async function persist(next: Record<string, SignSel>, markCompleted: boolean) {
     if (!uploadId || !productionId) return;
     setSaving(true);
     try {
-      const detected = Object.entries(next)
-        .filter(([, side]) => side)
-        .map(([key, side]) => signValue(key, side as Side));
+      const detected = toEntries(next, SIGN_KEYS_WITHOUT_SIDE);
 
       if (markCompleted) {
         // 確定はこの1回の呼び出しだけで detected_signs の更新+完了フラグ+履歴記録(1件)を行う。
         // 個々のチェック(下書き保存)では履歴を作らないため、記録は「確定した」という事実の1件だけになる。
         const completed = await confirmFootAnalysis(uploadId, orderId, customerUserId, productionId, detected, memberId);
         setFootAnalysisId(completed.id);
+        setSavedEntries(detected);
         // 作製中一覧の「分析」チェックを、確定と連動して自動でONにする(担当者・日時も記録)。
         // 失敗しても分析結果自体の確定は成立しているため、ここは握りつぶしてログのみ残す。
         try {
@@ -255,6 +272,7 @@ export default function GaitAnalysis() {
         // 下書き保存: チェックのたびに呼ばれるため、履歴は作らずdetected_signsだけ更新する。
         const result = await saveDetectedSigns(uploadId, orderId, customerUserId, productionId, detected);
         setFootAnalysisId(result.id);
+        setSavedEntries(detected);
       }
     } catch (e) {
       console.error("persist(GaitAnalysis) failed:", e);
@@ -264,8 +282,8 @@ export default function GaitAnalysis() {
     }
   }
 
-  function handleSelect(key: string, side: Side | null) {
-    const next = { ...selections, [key]: side };
+  function handleSelect(key: string, sel: SignSel) {
+    const next = { ...selections, [key]: sel };
     setSelections(next);
     persist(next, false);
   }
@@ -395,8 +413,8 @@ export default function GaitAnalysis() {
                       {s.p_measure && <p className="text-xs text-gray-400 mb-3">{s.p_measure}</p>}
                       <SideButtons
                         sign={s}
-                        selected={selections[s.key] ?? null}
-                        onSelect={(side) => handleSelect(s.key, side)}
+                        sel={selections[s.key] ?? EMPTY_SEL}
+                        onChange={(next) => handleSelect(s.key, next)}
                       />
                     </div>
                   ))}

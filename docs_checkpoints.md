@@ -255,3 +255,15 @@ git push --force-with-lease       # リモートも戻す(要事前確認・複�
 - 前提: `stripe_payments` の読み取りは spiralturn-green-integration の Green migration 047(`hq_has_perm('customer','view')`のRLSポリシー追加)で許可済み。本アプリ側の追加DB変更は無し(既存の`orders`/`stripe_payments`スキーマをそのまま読むだけ)。
 - ビルド: `npx tsc --noEmit`(変更前後ともエラー0件・stashで比較確認済み)/ `npx vite build` 成功(1716 modules)。
 - 戻し方: `git checkout -- client/src/lib/supabase.ts client/src/pages/CustomerDetail.tsx`(DB変更が無いためこれのみで完全に戻る)。
+
+## 2026-09-19: 動作分析の入力を「左右×強弱」の4ボタンに変更(左弱・左強・右弱・右強)
+
+- 変更前 HEAD: `81806f9` / Vercel Production: https://customer-console-jade.vercel.app
+- 背景: 冨永社長指示。従来の「左/右/両側」は有無(0/1)しか表せず、「左に少しある」と「左に明らかにある」を区別できなかった。
+- 変更:
+  - `client/src/lib/gaitSigns.ts`(新規): 選択状態と `foot_analyses.detected_signs` の相互変換・表示ラベル。保存形式は `key:left_weak` / `left_strong` / `right_weak` / `right_strong`(左右とも選べば2要素)、左右の概念が無いサイン(no_arm_swing)は従来どおり `key:both`。旧形式(`left`/`right`/`both`)も読み取り可能(編集フォーム上は旧「左/右」=強、旧「両側」=左強+右強として読み込む。サマリー表示は旧ラベルのまま)。
+  - `GaitAnalysis.tsx`: ボタンを [左弱(小・緑)][左強(2倍幅・赤ピンク)][右弱(小・緑)][右強(2倍幅・赤ピンク)] に変更。「両側」ボタンは廃止(左右とも選べば両側の意味)。同じボタンの再押下で解除、同じ側の弱⇔強は排他、左右は独立。**「少ない方をチェック」型の2サイン(single_arm_swing / sole_area_compare)は従来どおり片側のみ選択可**(強弱は選べる)。結果サマリーは1サイン1行(例「左強 / 右弱」)。
+  - `CustomerDetail.tsx`: 動作分析結果カードを同じ表示ルール(1サイン1行)に変更。
+- DB変更: なし(detected_signs は text[] のまま。新しい文字列値が入るだけ)。ただしメール本文RPCの追随が必要 → migration 055(別途Greenへ適用)。
+- 検証: `npx tsc --noEmit` エラー0件 / `npx vite build` 成功 / gaitSigns.ts の変換ロジックを実行して往復変換・旧形式読込・ラベルまとめを確認済み。**画面上の見た目・操作感は実機未確認**(ブラウザ操作環境が無いため)。
+- 戻し方: このコミットのみ `git revert`。または Vercel で `81806f9` 時点の本番デプロイを Promote to Production。

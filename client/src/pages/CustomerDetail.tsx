@@ -52,6 +52,7 @@ import {
   type AnalysisRevision,
   type SystemMember,
 } from "@/lib/supabase";
+import { groupDetectedLabels } from "@/lib/gaitSigns";
 import { useAuth } from "@/contexts/AuthContext";
 
 const PINK = "#D62598";
@@ -464,7 +465,6 @@ function ShippingSection({
 // 2026-08-27: 別ページ(動作分析画面)への遷移が面倒という指摘を受け、
 // 結果サマリーと再送UIを顧客詳細トップ画面(通信履歴の直上)に表示するよう変更。
 // 詳細な検出サインの編集自体は引き続き別ページ(修正ボタン)で行う。
-const SIDE_LABEL: Record<string, string> = { left: '左', right: '右', both: '両側' };
 
 function AnalysisResultSection({
   analysis,
@@ -492,14 +492,12 @@ function AnalysisResultSection({
   memberNames: Record<string, string>;
 }) {
   const signByKey = new Map(signs.map((s) => [s.key, s]));
-  const detected = (analysis?.detected_signs ?? [])
-    .map((entry) => {
-      const [key, side] = entry.split(':');
-      const sign = signByKey.get(key);
-      if (!sign) return null;
-      return { title: sign.title, sideLabel: SIDE_LABEL[side] ?? side };
-    })
-    .filter((v): v is { title: string; sideLabel: string } => v !== null);
+  // 左右の強弱(左弱・左強・右弱・右強)を1サイン1行にまとめて表示(lib/gaitSigns.ts)
+  const detected: { title: string; sideLabel: string }[] = [];
+  groupDetectedLabels(analysis?.detected_signs).forEach((labels, key) => {
+    const sign = signByKey.get(key);
+    if (sign) detected.push({ title: sign.title, sideLabel: labels.join(' / ') });
+  });
 
   return (
     <>
